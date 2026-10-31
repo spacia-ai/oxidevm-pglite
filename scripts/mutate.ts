@@ -5,13 +5,13 @@
 //   node scripts/mutate.ts wire     only those whose id starts with "wire"
 //
 // The working tree must be clean in the files it mutates: each file is restored after its mutation, even on failure.
-import { execFile, execFileSync } from "node:child_process";
+// The tests must pass unmutated first. A mutation that makes the code loop forever stops no test by an assertion: the run
+// is cut off after four times the unmutated duration (at least a minute) and reported as "no end", still as caught.
+import { execFileSync, spawn } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
-const execute = promisify(execFile);
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 interface Mutation {
@@ -89,11 +89,60 @@ export const MUTATIONS: readonly Mutation[] = [
   { id: "options-workspace", file: "src/options.ts", find: "if (!value.startsWith(`${WORKSPACE}/`)) throw refusal;", replace: "", tests: ["test/options.test.ts"] },
 ];
 
+const BASELINE_LIMIT_MS = 300_000;
+const MINIMUM_LIMIT_MS = 60_000;
+
+interface Outcome {
+  /** `undefined` when every test passed, otherwise what stopped the run. */
+  readonly stopped: string | undefined;
+  readonly milliseconds: number;
+}
+
+/** Runs the tests a mutation should break, and stops them, workers included, when they have not ended after `limitMs`. */
+function runTests(tests: readonly string[], limitMs: number): Promise<Outcome> {
+  return new Promise(resolve => {
+    const began = performance.now();
+    const child = spawn(join(root, "node_modules/.bin/vitest"), ["run", ...tests, "--bail=1", "--testTimeout=20000"], { cwd: root, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    let hung = false;
+    const collect = (chunk: Buffer | string): void => { output = `${output}${String(chunk)}`.slice(-2 * 1024 ** 2); };
+    child.stdout.on("data", collect);
+    child.stderr.on("data", collect);
+    // The workers share the process group of vitest, so that one signal ends them all.
+    const timer = setTimeout(() => {
+      hung = true;
+      if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+    }, limitMs);
+    const finish = (stopped: string | undefined): void => { clearTimeout(timer); resolve({ stopped, milliseconds: performance.now() - began }); };
+    child.on("error", () => { finish("vitest did not start"); });
+    child.on("close", status => {
+      if (hung) finish("no end: the mutated code did not terminate within the limit, so the test run was stopped");
+      else if (status === 0) finish(undefined);
+      else finish(/FAIL\s+(\S+) > ([^\n]+)/u.exec(output)?.slice(1).join(" > ") ?? "a failing run");
+    });
+  });
+}
+
+const setOf = (tests: readonly string[]): string => tests.join(" ");
+
+/** The tests must pass before anything is mutated; how long they took sets how long a mutated run may take. */
+async function limitsFor(selected: readonly Mutation[]): Promise<ReadonlyMap<string, number>> {
+  const limits = new Map<string, number>();
+  for (const { tests } of selected) {
+    if (limits.has(setOf(tests))) continue;
+    const { stopped, milliseconds } = await runTests(tests, BASELINE_LIMIT_MS);
+    if (stopped !== undefined) throw new Error(`The tests fail without any mutation (${setOf(tests)}): ${stopped}`);
+    limits.set(setOf(tests), Math.max(MINIMUM_LIMIT_MS, 4 * milliseconds));
+  }
+  return limits;
+}
+
 async function main(prefix: string): Promise<number> {
   const selected = MUTATIONS.filter(mutation => mutation.id.startsWith(prefix));
   const files = [...new Set(selected.map(mutation => mutation.file))];
   const dirty = execFileSync("git", ["status", "--porcelain", "--", ...files], { cwd: root, encoding: "utf8" });
   if (dirty.trim() !== "") throw new Error(`Commit or stash first; these files differ from HEAD:\n${dirty}`);
+  const limits = await limitsFor(selected);
   const survivors: string[] = [];
   for (const mutation of selected) {
     const path = join(root, mutation.file);
@@ -101,12 +150,9 @@ async function main(prefix: string): Promise<number> {
     if (original.split(mutation.find).length !== 2) throw new Error(`${mutation.id}: the text to change must occur exactly once in ${mutation.file}`);
     await writeFile(path, original.replace(mutation.find, () => mutation.replace));
     try {
-      const outcome = await execute(join(root, "node_modules/.bin/vitest"), ["run", ...mutation.tests, "--bail=1", "--testTimeout=60000"], { cwd: root, timeout: 240_000, maxBuffer: 16 * 1024 ** 2 }).then(
-        () => "survived",
-        (error: unknown) => `killed by ${error instanceof Error && "stdout" in error ? /FAIL\s+(\S+) > ([^\n]+)/u.exec(`${String(error.stdout)}\n${"stderr" in error ? String(error.stderr) : ""}`)?.slice(1).join(" > ") ?? "a failing run" : "a failing run"}`,
-      );
-      process.stdout.write(`${outcome.startsWith("survived") ? "SURVIVED" : "killed  "}  ${mutation.id}${outcome.startsWith("survived") ? "" : `  (${outcome.slice(10)})`}\n`);
-      if (outcome.startsWith("survived")) survivors.push(mutation.id);
+      const { stopped } = await runTests(mutation.tests, limits.get(setOf(mutation.tests)) ?? MINIMUM_LIMIT_MS);
+      process.stdout.write(stopped === undefined ? `SURVIVED  ${mutation.id}\n` : `killed    ${mutation.id}  (${stopped})\n`);
+      if (stopped === undefined) survivors.push(mutation.id);
     } finally {
       await writeFile(path, original);
     }
