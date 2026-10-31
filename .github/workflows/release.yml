@@ -1,18 +1,23 @@
 # Publishing is the only step that changes what other people install, so it goes draft, verify, publish:
 # the draft is downloaded again and checked against its own SHA256SUMS before it becomes visible.
+# Dependencies install and build in a job that can only read; the job that may write to the repository runs
+# nothing but the gh commands, so no install script or dependency code ever sees its token.
+# This workflow starts on request only. The @oxidevm packages of the CLI that generated this project are on a private registry
+# that GitHub's runners cannot reach, so an automatic run would fail on every push. Give it the push (and pull_request, or tag)
+# trigger of the public template once the packages install from a registry the runner can reach.
+# Start it from a tag: pick the tag, not a branch, in the Run workflow dialog, because the first check compares the tag with the version.
 name: release
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -23,6 +28,24 @@ jobs:
       - run: pnpm run build
       - name: The tag must name the version in module.json
         run: test "v$(node -p "JSON.parse(require('node:fs').readFileSync('dist/module.json', 'utf8')).version")" = "$GITHUB_REF_NAME"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-files
+          path: dist/*
+          if-no-files-found: error
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-files
+          path: dist
       - name: Draft the release
         run: gh release create "$GITHUB_REF_NAME" dist/* --draft --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
       - name: Verify the draft

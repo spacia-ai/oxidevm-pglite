@@ -198,11 +198,21 @@ transaction rolls back) and **migration** (a legacy IndexedDB database moves int
 
 ## Release
 
+Publishing changes what others can install, so it goes draft, verify, publish: the draft is downloaded again and checked
+against its own `SHA256SUMS` before it becomes visible. The tag must name the version in `module.ts`.
+
 ```sh
 git tag v0.1.0 && git push origin v0.1.0
+pnpm run build
+gh release create v0.1.0 dist/* --draft --verify-tag --title v0.1.0
+gh release download v0.1.0 --dir verify && (cd verify && sha256sum --check SHA256SUMS)
+gh release edit v0.1.0 --draft=false
 ```
 
-`pnpm run release` prints the steps (the generated `release` workflow does them on a tag push). Consumers install with
+`pnpm run release` prints these steps and runs none of them. The `release` workflow does the same in GitHub Actions, in two
+jobs: a read-only one fetches the mirrored WebAssembly and builds, and a second one, which installs nothing, drafts, verifies
+and publishes. Both workflows start on request only (run `release` from the tag): the install step needs `@oxidevm/sdk` and
+`@oxidevm/cli`, which only a private registry serves today, so a push trigger would fail on every push. Consumers install with
 `oxidevm wasm add github:spacia-ai/oxidevm-pglite@v0.1.0`.
 
 ### Build warnings
