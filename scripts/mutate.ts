@@ -63,6 +63,11 @@ export const MUTATIONS: readonly Mutation[] = [
   { id: "fs-chmod-bits", file: "src/vm-fs.ts", find: "this.#ports.files.chmod(target, mode & PERMISSION_BITS)", replace: "this.#ports.files.chmod(target, mode)", tests: FS },
   { id: "fs-truncate-length", file: "src/vm-fs.ts", find: "!Number.isSafeInteger(length) || length < 0", replace: "length < 0", tests: FS },
   { id: "fs-rename-follows", file: "src/vm-fs.ts", find: "if (item.path === from) item.path = to;", replace: "", tests: FS },
+  { id: "wire-copy-handshake-flush", file: "src/wire.ts", find: "  sink.flushSync();\n  sink.reset();", replace: "  sink.reset();", tests: [...WIRE, "test/adapter.test.ts"] },
+  { id: "wire-response-flush", file: "src/wire.ts", find: 'if (framer.truncated) throw new Error("Truncated PostgreSQL backend response");\n  await sink.flush(signal());', replace: 'if (framer.truncated) throw new Error("Truncated PostgreSQL backend response");', tests: [...WIRE, "test/adapter.test.ts"] },
+  { id: "adapter-copy-socket", file: "module.ts", find: "host.fs.read(connection.fd, maxBytes)", replace: "host.fs.read(0, maxBytes)", tests: ["test/adapter.test.ts"] },
+  { id: "adapter-requires-spawn", file: "module.ts", find: 'host: ["files.sync", "process.info"]', replace: 'host: ["files.sync", "process.info", "process.spawn"]', tests: ["test/adapter.test.ts", "test/module.test.ts"] },
+  { id: "adapter-spawns", file: "module.ts", find: "const { pid } = await host.process.info();", replace: 'const { pid } = await host.process.info(); void Reflect.get(host.process, "spawn");', tests: ["test/adapter.test.ts"] },
   { id: "sink-nosignal", file: "src/client-sink.ts", find: "ports.fs.writeAll(ports.connection.fd, bytes, { noSignal: true });", replace: "ports.fs.writeAll(ports.connection.fd, bytes);", tests: ["test/client-sink.test.ts"] },
   { id: "sink-threshold", file: "src/client-sink.ts", find: "export const STREAM_THRESHOLD = 1024 ** 2;", replace: "export const STREAM_THRESHOLD = 2 * 1024 ** 2;", tests: ["test/client-sink.test.ts"] },
   { id: "sink-threshold-comparison", file: "src/client-sink.ts", find: "if (pendingBytes >= threshold) sendNow();", replace: "if (pendingBytes > threshold) sendNow();", tests: ["test/client-sink.test.ts"] },
@@ -98,7 +103,7 @@ async function main(prefix: string): Promise<number> {
     try {
       const outcome = await execute(join(root, "node_modules/.bin/vitest"), ["run", ...mutation.tests, "--bail=1", "--testTimeout=60000"], { cwd: root, timeout: 240_000, maxBuffer: 16 * 1024 ** 2 }).then(
         () => "survived",
-        (error: unknown) => `killed by ${error instanceof Error && "stdout" in error ? /FAIL\s+(\S+) > ([^\n]+)/u.exec(String(error.stdout))?.slice(1).join(" > ") ?? "a failing run" : "a failing run"}`,
+        (error: unknown) => `killed by ${error instanceof Error && "stdout" in error ? /FAIL\s+(\S+) > ([^\n]+)/u.exec(`${String(error.stdout)}\n${"stderr" in error ? String(error.stderr) : ""}`)?.slice(1).join(" > ") ?? "a failing run" : "a failing run"}`,
       );
       process.stdout.write(`${outcome.startsWith("survived") ? "SURVIVED" : "killed  "}  ${mutation.id}${outcome.startsWith("survived") ? "" : `  (${outcome.slice(10)})`}\n`);
       if (outcome.startsWith("survived")) survivors.push(mutation.id);
