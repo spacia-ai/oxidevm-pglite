@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.log
+.cache/
+# Mirrored upstream binaries are fetched and verified by scripts/fetch-upstream.ts; only the lock is committed.
+upstream/*
+!upstream/lock.json
+__pycache__/
+*.pyc

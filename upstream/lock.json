@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "package": {
+    "name": "@electric-sql/pglite",
+    "version": "0.5.14",
+    "license": "Apache-2.0",
+    "tarball": "https://registry.npmjs.org/@electric-sql/pglite/-/pglite-0.5.14.tgz",
+    "bytes": 9325257,
+    "sha256": "91e12f555b6aa4115ec32986a3849357e74fd79dec1c220c2737259ad1c3a75f",
+    "integrity": "sha512-aAQe7iArcFB2w1xtx91l3l9trxhMzD6aZf+WnosSHNhwgp70EJz80Igw/bHnW14fUEFYWPBoQ1sGom8Xc0Jttg=="
+  },
+  "files": [
+    {
+      "name": "pglite.wasm",
+      "path": "package/dist/pglite.wasm",
+      "bytes": 9087748,
+      "sha256": "7ec09d5161aabfe03cf6f3999549398a14e23db467d799fbd28004586d362035"
+    },
+    {
+      "name": "initdb.wasm",
+      "path": "package/dist/initdb.wasm",
+      "bytes": 300109,
+      "sha256": "0730c91ee9d6bf1c060c618c7c1ca1adcbb14191828ef794a4d77a85f66d965f"
+    },
+    {
+      "name": "pglite.data",
+      "path": "package/dist/pglite.data",
+      "bytes": 6248509,
+      "sha256": "2e46ee079b4a922f7514f2d6d17099bbcb2ac26b7db4938374d663caa07b435e"
+    },
+    {
+      "name": "PGLITE-LICENSE",
+      "path": "package/LICENSE",
+      "bytes": 10173,
+      "sha256": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+    }
+  ]
+}

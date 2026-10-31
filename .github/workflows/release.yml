@@ -1,0 +1,33 @@
+# Publishing is the only step that changes what other people install, so it goes draft, verify, publish:
+# the draft is downloaded again and checked against its own SHA256SUMS before it becomes visible.
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - name: The tag must name the version in module.json
+        run: test "v$(node -p "JSON.parse(require('node:fs').readFileSync('dist/module.json', 'utf8')).version")" = "$GITHUB_REF_NAME"
+      - name: Draft the release
+        run: gh release create "$GITHUB_REF_NAME" dist/* --draft --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
+      - name: Verify the draft
+        run: |
+          mkdir verify
+          gh release download "$GITHUB_REF_NAME" --dir verify
+          cd verify
+          sha256sum --check SHA256SUMS
+      - name: Publish
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false
