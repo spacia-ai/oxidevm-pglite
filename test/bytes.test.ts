@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { int32, join, number32 } from "../src/bytes.ts";
+import { concat, int32, join, number32 } from "../src/bytes.ts";
 
 describe("int32", () => {
   it("writes four big-endian bytes", () => {
@@ -38,5 +38,16 @@ describe("join", () => {
 
   it("returns an empty array for no parts", () => {
     expect(join().length).toBe(0);
+  });
+});
+
+describe("concat", () => {
+  it("joins a list of any length, which a spread of arguments could not", () => {
+    const parts = Array.from({ length: 300_000 }, (_value, index) => Uint8Array.of(index % 251));
+    const all = concat(parts);
+    expect(all.length).toBe(300_000);
+    expect(all[250]).toBe(250);
+    expect(all[251]).toBe(0);
+    expect(concat([]).length).toBe(0);
   });
 });

@@ -4,7 +4,7 @@ import { classifyLicense, decodeDeclaration, isServiceDecl } from "@oxidevm/sdk/
 import { describe, expect, it } from "vitest";
 import definition from "../module.ts";
 import { decodeLock } from "../scripts/upstream.ts";
-import { CLIENT_SCRIPT, GUEST_FILES, METADATA_SCRIPT, OXIDEVM_DIRECTORY, SQL_SOCKET, STAGING_DIRECTORY, WRITER_SCRIPT } from "../src/layout.ts";
+import { CLIENT_SCRIPT, GUEST_FILES, OXIDEVM_DIRECTORY, SQL_SOCKET, STAGING_DIRECTORY } from "../src/layout.ts";
 
 const { manifest } = definition;
 const root = path.join(import.meta.dirname, "..");
@@ -18,7 +18,7 @@ describe("the manifest", () => {
   });
 
   it("is a service for Emscripten-built WebAssembly, exclusive per workspace, serving at most four clients", () => {
-    expect(manifest).toMatchObject({ id: "pglite", version: "0.1.0", abi: "emscripten", process: { kind: "service", exclusive: "workspace" }, limits: { clients: 4 } });
+    expect(manifest).toMatchObject({ id: "pglite", version: "0.1.0", abi: "emscripten", process: { kind: "service", exclusive: "workspace" }, limits: { clients: 4, startupMs: 300_000 } });
   });
 
   it("exposes the JSON endpoint on a Unix socket and the PostgreSQL protocol on the standard port", () => {
@@ -29,10 +29,10 @@ describe("the manifest", () => {
     expect(manifest.expose.sql.path).toBe(SQL_SOCKET);
   });
 
-  it("asks only for what the adapter uses", () => {
-    expect([...manifest.requires.host].sort()).toEqual(["files.async", "files.sync", "process.info", "process.spawn"]);
+  it("asks only for what the adapter uses: files, the process id, and no program of the image", () => {
+    expect([...manifest.requires.host].sort()).toEqual(["files.sync", "process.info"]);
     expect([...manifest.requires.browser].sort()).toEqual(["indexeddb", "web-locks"]);
-    expect(manifest.requires.guest.executables).toEqual(["/usr/bin/python3"]);
+    expect(Object.keys(manifest.requires).sort()).toEqual(["browser", "host"]);
     expect(manifest.mounts).toEqual([{ guest: "/workspace", access: "rw", durability: "fsync" }]);
     expect(manifest.state.durable).toEqual(["/workspace/pgdata"]);
   });
@@ -45,9 +45,9 @@ describe("the manifest", () => {
     });
   });
 
-  it("declares the guest files the adapter writes, at the paths the helpers are started from", () => {
+  it("declares the one guest file the adapter writes, the Python client", () => {
     expect(manifest.guestFiles).toEqual(GUEST_FILES.map(file => ({ artifact: file.artifact, to: file.to, mode: file.mode })));
-    expect(GUEST_FILES.map(file => file.to)).toEqual([METADATA_SCRIPT, WRITER_SCRIPT, CLIENT_SCRIPT]);
+    expect(GUEST_FILES.map(file => file.to)).toEqual([CLIENT_SCRIPT]);
     for (const file of GUEST_FILES) expect(file.to.startsWith(`${OXIDEVM_DIRECTORY}/`)).toBe(true);
     expect(STAGING_DIRECTORY.startsWith(`${OXIDEVM_DIRECTORY}/`)).toBe(true);
   });
@@ -68,6 +68,7 @@ describe("the artifacts", () => {
   it("name every guest file and the notices", () => {
     const names = new Set(manifest.artifacts.map(artifact => artifact.name));
     for (const file of manifest.guestFiles) expect(names.has(file.artifact)).toBe(true);
+    expect([...names].sort()).toEqual(["NOTICES.txt", "initdb.wasm", "oxidevm_pglite.py", "pglite.data", "pglite.wasm"]);
     for (const notice of manifest.license.notices) expect(names.has(notice)).toBe(true);
   });
 

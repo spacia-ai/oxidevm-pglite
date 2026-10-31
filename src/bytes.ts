@@ -13,7 +13,7 @@ export function number32(bytes: Uint8Array): number {
 }
 
 /** One new array holding the parts one after another. */
-export function join(...parts: readonly Uint8Array[]): Uint8Array<ArrayBuffer> {
+export function concat(parts: readonly Uint8Array[]): Uint8Array<ArrayBuffer> {
   const bytes = new Uint8Array(parts.reduce((size, part) => size + part.length, 0));
   let offset = 0;
   for (const part of parts) {
@@ -21,4 +21,9 @@ export function join(...parts: readonly Uint8Array[]): Uint8Array<ArrayBuffer> {
     offset += part.length;
   }
   return bytes;
+}
+
+/** The same, for a few parts that are at hand (a long list goes to `concat`, which has no argument limit). */
+export function join(...parts: readonly Uint8Array[]): Uint8Array<ArrayBuffer> {
+  return concat(parts);
 }

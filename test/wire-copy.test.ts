@@ -19,7 +19,7 @@ let db: PGlite;
 beforeAll(async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "pglite-wire-copy-"));
   const { files } = createNodeFiles();
-  db = await PGlite.create({ fs: new VMPostgresFS(root, { files, errno: kit.errno, directory: kit.directory, utimes: () => undefined }) });
+  db = await PGlite.create({ fs: new VMPostgresFS(root, { files, errno: kit.errno, directory: kit.directory }) });
 });
 afterAll(async () => {
   await db.close();

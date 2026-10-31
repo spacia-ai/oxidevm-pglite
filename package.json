@@ -5,17 +5,18 @@
   "type": "module",
   "scripts": {
     "build": "oxidevm wasm build",
-    "check": "tsc --noEmit && tsc --noEmit -p test && tsc --noEmit -p scripts && eslint . --max-warnings 0 && oxidevm wasm build --check",
+    "check": "tsc --noEmit && tsc --noEmit -p test && tsc --noEmit -p scripts && eslint . --max-warnings 0 && node scripts/fetch-upstream.ts --verify && oxidevm wasm build --check",
     "fetch-upstream": "node scripts/fetch-upstream.ts",
     "release": "oxidevm wasm release",
     "test": "vitest run",
-    "test:browser": "node test/browser/run.ts"
+    "test:browser": "node test/browser/run.ts",
+    "mutate": "node scripts/mutate.ts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.14",
     "@eslint/js": "10.0.1",
-    "@oxidevm/cli": "0.1.0-alpha.286",
-    "@oxidevm/sdk": "0.1.0-alpha.286",
+    "@oxidevm/cli": "0.1.0-alpha.301",
+    "@oxidevm/sdk": "0.1.0-alpha.301",
     "@types/emscripten": "1.41.6",
     "@types/node": "24.13.3",
     "eslint": "10.7.0",

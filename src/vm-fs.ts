@@ -1,20 +1,16 @@
 import { BaseFilesystem } from "@electric-sql/pglite/basefs";
 import type { FsStats } from "@electric-sql/pglite/basefs";
-import { errorText, HelperError, toError } from "./errors.ts";
+import { errorText, toError } from "./errors.ts";
 import type { Descriptor, KitDirectory, KitErrno, SyncFiles } from "./ports.ts";
 
 /** The VM file operations the database files need. */
-export type VmFiles = Pick<SyncFiles, "open" | "close" | "seek" | "read" | "write" | "fsync" | "lstat" | "fstat" | "mkdir" | "rename" | "unlink" | "readdir" | "chmod" | "truncate">;
+export type VmFiles = Pick<SyncFiles, "open" | "close" | "seek" | "read" | "write" | "fsync" | "lstat" | "fstat" | "mkdir" | "rename" | "unlink" | "readdir" | "chmod" | "truncate" | "utimes">;
 type FileStat = ReturnType<VmFiles["lstat"]>;
-
-/** Sets a file's access and modification times, in milliseconds (the host has no such operation yet). */
-export type Utimes = (path: string, atimeMs: number, mtimeMs: number) => void;
 
 export interface VmFsPorts {
   readonly files: VmFiles;
   readonly errno: KitErrno;
   readonly directory: KitDirectory;
-  readonly utimes: Utimes;
   /** Where a flush failure that nobody awaited is reported. */
   readonly log?: (line: string) => void;
 }
@@ -68,7 +64,7 @@ export class VMPostgresFS extends BaseFilesystem {
     try {
       return operation();
     } catch (error: unknown) {
-      const errno = this.#ports.errno.of(error) ?? (error instanceof HelperError ? error.errno : undefined);
+      const errno = this.#ports.errno.of(error);
       if (errno === undefined) throw error;
       throw this.#failure(error instanceof Error ? error.message : "Linux filesystem failure", errno);
     }
@@ -121,11 +117,14 @@ export class VMPostgresFS extends BaseFilesystem {
     });
   }
 
+  /** PostgreSQL's file system layer gives times as milliseconds since the epoch; the host takes them as dates, to the millisecond. */
   override utimes(path: string, atime: number, mtime: number): void {
     this.#call(() => {
+      const accessed = new Date(atime), modified = new Date(mtime);
+      if (Number.isNaN(accessed.getTime()) || Number.isNaN(modified.getTime())) throw new Error("Invalid database file time");
       this.#assertWritable();
       const target = this.#target(path);
-      this.#ports.utimes(target, atime, mtime);
+      this.#ports.files.utimes(target, accessed, modified, { followLinks: true });
       this.#changed(target);
     });
   }

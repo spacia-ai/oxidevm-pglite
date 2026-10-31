@@ -12,14 +12,14 @@ type FrameSource = Parameters<Kit["framing"]["readExactly"]>[0];
 export type WireDatabase = Pick<PGlite, "runExclusive" | "isInTransaction" | "execProtocolRawStream" | "fs">;
 
 /**
- * Where a session's responses go. The bytes are spooled and a helper process writes them to the client
- * (phase 1: a JavaScript write to a client that has gone ends the process; engine API 144 removes the helper).
+ * Where a session's responses go: collected while a statement runs, and sent when it is done, or earlier when the
+ * session cannot wait (see `createClientSink`).
  */
 export interface ResponseSink {
-  /** Starts a new response, dropping what was spooled and not sent. */
+  /** Starts a new response, dropping what was collected and not sent. */
   reset(): void;
   write(bytes: Uint8Array): void;
-  /** Sends what was spooled; resolves once the client has received it, rejects when it stopped receiving. */
+  /** Sends what was collected; resolves once the client has taken it, rejects when it stopped receiving. */
   flush(signal: AbortSignal): Promise<void>;
   /** The same, blocking: used while PostgreSQL waits for the client's COPY data. */
   flushSync(): void;

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { LinuxError } from "@oxidevm/sdk/js-process";
 import type { NativeProcesses } from "../../src/ports.ts";
-import type { FileDescriptor, LinuxDirectoryEntry, LinuxFileStat, LinuxPath, SeekOrigin } from "@oxidevm/sdk/js-process";
+import type { FileDescriptor, LinuxDirectoryEntry, LinuxFileStat, LinuxPath, LinuxSyncWriteOptions, LinuxTimeOptions, LinuxTimestamp, SeekOrigin } from "@oxidevm/sdk/js-process";
 
 /** The VM file operations the adapter's modules use, backed by a real directory of the machine running the test. */
 export interface NodeFiles {
@@ -9,8 +9,8 @@ export interface NodeFiles {
   close(fd: FileDescriptor): void;
   seek(fd: FileDescriptor, offset: bigint, origin?: SeekOrigin): bigint;
   read(fd: FileDescriptor, count: number): Uint8Array;
-  write(fd: FileDescriptor, bytes: Uint8Array): number;
-  writeAll(fd: FileDescriptor, bytes: Uint8Array): void;
+  write(fd: FileDescriptor, bytes: Uint8Array, options?: LinuxSyncWriteOptions): number;
+  writeAll(fd: FileDescriptor, bytes: Uint8Array, options?: LinuxSyncWriteOptions): void;
   fsync(fd: FileDescriptor): void;
   lstat(path: LinuxPath): LinuxFileStat;
   stat(path: LinuxPath): LinuxFileStat;
@@ -21,12 +21,15 @@ export interface NodeFiles {
   readdir(path: LinuxPath): readonly LinuxDirectoryEntry[];
   chmod(path: LinuxPath, mode: number): void;
   truncate(path: LinuxPath, length: bigint | number): void;
+  utimes(path: LinuxPath, access: LinuxTimestamp, modification: LinuxTimestamp, options?: LinuxTimeOptions): void;
   readFile(path: LinuxPath, maxBytes?: number): Uint8Array;
   writeFile(path: LinuxPath, bytes: Uint8Array): void;
 }
 
 export interface NodeFilesHarness {
   readonly files: NodeFiles;
+  /** Every `utimes`, as the host received it. */
+  readonly times: { readonly path: string; readonly access: LinuxTimestamp; readonly modification: LinuxTimestamp; readonly options: LinuxTimeOptions | undefined }[];
   /** Every `fsync`, as `fsync:<path>` in call order. */
   readonly syncs: string[];
   /** Every `fsync`, `rename` and `mkdir`, in call order, for tests of the order in which things become durable. */
@@ -86,6 +89,7 @@ export function createNodeFiles(translate: (path: string) => string = path => pa
   const harness: NodeFilesHarness = {
     syncs: [],
     ops: [],
+    times: [],
     failFsync: false,
     files: {
       open(path, flags = 0, mode = 0o600) {
@@ -141,6 +145,14 @@ export function createNodeFiles(translate: (path: string) => string = path => pa
       }))),
       chmod(path, mode) { linux(() => { fs.chmodSync(real(path), mode & 0o7777); }); },
       truncate(path, length) { linux(() => { fs.truncateSync(real(path), Number(length)); }); },
+      utimes(path, access, modification, options) {
+        harness.times.push({ path: text(path), access, modification, options });
+        const now = new Date();
+        const current = (): fs.Stats => linux(() => fs.statSync(real(path)));
+        const resolve = (time: LinuxTimestamp, existing: () => Date): Date => time === "now" ? now : time === "omit" ? existing() : time;
+        const accessed = resolve(access, () => current().atime), modified = resolve(modification, () => current().mtime);
+        linux(() => { if (options?.followLinks === false) fs.lutimesSync(real(path), accessed, modified); else fs.utimesSync(real(path), accessed, modified); });
+      },
       readFile: (path, maxBytes) => {
         const bytes = linux(() => fs.readFileSync(real(path)));
         if (maxBytes !== undefined && bytes.length > maxBytes) throw new LinuxError(27);

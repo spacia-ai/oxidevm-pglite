@@ -18,6 +18,8 @@ jobs:
           node-version: 24
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
+      - name: Fetch the mirrored WebAssembly, checked against upstream/lock.json
+        run: node scripts/fetch-upstream.ts
       - run: pnpm run build
       - name: The tag must name the version in module.json
         run: test "v$(node -p "JSON.parse(require('node:fs').readFileSync('dist/module.json', 'utf8')).version")" = "$GITHUB_REF_NAME"

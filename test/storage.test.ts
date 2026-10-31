@@ -30,7 +30,7 @@ afterEach(async () => {
   fs.rmSync(base, { recursive: true, force: true });
 });
 
-const host = (): StorageHost => ({ files: harness.files, kit, utimes: () => undefined, log: line => { logs.push(line); } });
+const host = (): StorageHost => ({ files: harness.files, kit, log: line => { logs.push(line); } });
 const options = (extra: Partial<StorageOptions> = {}): StorageOptions => ({ dataDir, stagingDir, backupDir, pglite: {}, ...extra });
 
 async function open(extra: Partial<StorageOptions> = {}): Promise<OpenedDatabase> {

@@ -27,7 +27,8 @@ export function fakeConnection(input: Uint8Array = new Uint8Array(0), options: {
   let queued = input;
   let waiting: { readonly resolve: () => void } | undefined;
   const connection: FakeConnection = {
-    fd: descriptor(40),
+    // Far above the descriptors of real files on this machine, which the fake VM must not mistake for the socket.
+    fd: descriptor(4_000_040),
     signal: end.signal,
     written,
     reads,

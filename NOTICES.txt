@@ -8,8 +8,7 @@ This release (oxidevm-pglite 0.1.0) contains:
   initdb.wasm          the same package's database initializer, mirrored byte for byte
   pglite.data          the same package's file bundle (PostgreSQL's share directory, loadable modules and
                        collation data), mirrored byte for byte
-  pg-metadata.py, pg-writer.py, oxidevm_pglite.py
-                       the module's Python files, written into the guest
+  oxidevm_pglite.py    the module's Python client, written into the guest
   NOTICES.txt          this file
 
 The npm tarball @electric-sql/pglite-0.5.14.tgz has the sha256 91e12f555b6aa4115ec32986a3849357e74fd79dec1c220c2737259ad1c3a75f

@@ -1,4 +1,4 @@
-/** Decoding helpers for values that arrive as `unknown`: from pipes, sockets and files. */
+/** Decoding helpers for values that arrive as `unknown`: from sockets and files. */
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

@@ -1,0 +1,8 @@
+{
+  "image": "python:3.12-alpine3.22@sha256:a190708a2dec1bd18b1decb539f8e8f5407abaa9bf39cacda583f7f8c11db322",
+  "psql": "psql (PostgreSQL) 17.11",
+  "apk": "postgresql17-client: PostgreSQL client\npostgresql17-client: https://www.postgresql.org/\npostgresql17-client: 3115 KiB",
+  "psycopg": "3.2.13",
+  "sha256": "935b9b5a3f8d22c442e8a6386f0708b8317a6bbc6b601301b4f5111de236fe10",
+  "bytes": 7193549
+}

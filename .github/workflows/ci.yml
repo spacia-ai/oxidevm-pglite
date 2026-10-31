@@ -15,5 +15,7 @@ jobs:
           node-version: 24
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
+      - name: Fetch the mirrored WebAssembly, checked against upstream/lock.json
+        run: node scripts/fetch-upstream.ts
       - run: pnpm run check
       - run: pnpm test

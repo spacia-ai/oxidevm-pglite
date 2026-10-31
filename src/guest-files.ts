@@ -27,7 +27,7 @@ function sameContent(host: GuestFileHost, target: string, expected: Uint8Array):
 }
 
 /**
- * Makes sure the helper scripts and the Python client are in the guest, byte for byte as the release pins them.
+ * Makes sure the Python client is in the guest, byte for byte as the release pins it.
  * The manifest declares them as `guestFiles`; the engine's module runner does not write those yet, so the
  * adapter does, atomically (a temporary file renamed into place) and only when something differs.
  */

@@ -1,0 +1,8 @@
+OxideVM PGlite module
+Copyright 2026 Spacia B.V.
+
+This product includes software developed at Spacia B.V. (https://oxidevm.dev).
+
+The release also carries WebAssembly and a JavaScript library mirrored from the
+@electric-sql/pglite npm package, which are not Spacia software: their licenses
+and notices are in NOTICES.txt.

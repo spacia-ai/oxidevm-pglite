@@ -3,24 +3,20 @@ import os from "node:os";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { LinuxError } from "@oxidevm/sdk/js-process";
-import { HelperError } from "../src/errors.ts";
 import { kit } from "@oxidevm/sdk/wasm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { VMPostgresFS } from "../src/vm-fs.ts";
-import { createNodeFiles, descriptor } from "./support/node-files.ts";
+import { createNodeFiles, descriptor, text } from "./support/node-files.ts";
+import { tarEntries } from "./support/tar.ts";
 import type { NodeFilesHarness } from "./support/node-files.ts";
-
-interface Utimes { readonly path: string; readonly atimeMs: number; readonly mtimeMs: number }
 
 let root = "";
 let harness: NodeFilesHarness;
-let utimes: Utimes[];
 let logs: string[];
 
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "pglite-vm-fs-"));
   harness = createNodeFiles();
-  utimes = [];
   logs = [];
 });
 afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
@@ -30,7 +26,6 @@ function adapter(directory = root): VMPostgresFS {
     files: harness.files,
     errno: kit.errno,
     directory: kit.directory,
-    utimes: (target, atimeMs, mtimeMs) => { utimes.push({ path: target, atimeMs, mtimeMs }); },
     log: line => { logs.push(line); },
   });
 }
@@ -90,7 +85,21 @@ describe("path guard", () => {
       expect(() => { vmfs.truncate(bad, 0); }, bad).toThrow("Invalid PostgreSQL filesystem path");
       expect(() => { vmfs.utimes(bad, 1, 2); }, bad).toThrow("Invalid PostgreSQL filesystem path");
     }
-    expect(utimes).toEqual([]);
+    expect(harness.times).toEqual([]);
+  });
+
+  it("resolves every spelling of a path to the one normalized path below the root", () => {
+    const seen: string[] = [];
+    const recording = new VMPostgresFS(root, {
+      files: { ...harness.files, lstat(target) { seen.push(text(target)); return harness.files.lstat(target); } },
+      errno: kit.errno,
+      directory: kit.directory,
+    });
+    recording.mkdir("/a/b", { recursive: true });
+    for (const spelling of ["/a/b", "a/b", "//a///b/", "/a/b/"]) recording.lstat(spelling);
+    recording.lstat("/");
+    recording.lstat("");
+    expect(seen).toEqual([`${root}/a/b`, `${root}/a/b`, `${root}/a/b`, `${root}/a/b`, root, root]);
   });
 
   it("never touches anything outside the root", () => {
@@ -125,7 +134,6 @@ describe("errno mapping", () => {
       files: { ...harness.files, lstat() { throw new LinuxError(4000); }, fstat() { throw new TypeError("not a host failure"); } },
       errno: kit.errno,
       directory: kit.directory,
-      utimes: () => undefined,
     });
     expect(codeOf(() => failing.lstat("/x"))).toBe(29);
     const fd = failing.open("/x", "w");
@@ -227,7 +235,6 @@ describe("reading and writing", () => {
       files: { ...harness.files, write: () => 0 },
       errno: kit.errno,
       directory: kit.directory,
-      utimes: () => undefined,
     });
     expect(() => { stalled.writeFile("/stuck", "data"); }).toThrow("Database write made no progress");
   });
@@ -246,6 +253,29 @@ describe("reading and writing", () => {
   });
 });
 
+describe("large transfers", () => {
+  it("moves at most 16 MiB in one read or one write", () => {
+    const counts: { read: number[]; write: number[] } = { read: [], write: [] };
+    const capped = new VMPostgresFS(root, {
+      files: {
+        ...harness.files,
+        read(_fd, count) { counts.read.push(count); return new Uint8Array(0); },
+        write(_fd, bytes) { counts.write.push(bytes.length); return bytes.length; },
+      },
+      errno: kit.errno,
+      directory: kit.directory,
+    });
+    const fd = capped.open("/big", "w+");
+    const buffer = new Uint8Array(20 * 1024 ** 2);
+    expect(capped.read(fd, buffer, 0, buffer.length, 0)).toBe(0);
+    expect(capped.write(fd, buffer, 0, buffer.length, 0)).toBe(16 * 1024 ** 2);
+    expect(capped.write(fd, buffer, 1024, 100, 0)).toBe(100);
+    capped.read(fd, buffer, 0, 10, 0);
+    expect(counts).toEqual({ read: [16 * 1024 ** 2, 10], write: [16 * 1024 ** 2, 100] });
+    capped.close(fd);
+  });
+});
+
 describe("metadata", () => {
   it("applies chmod natively and hands the host only the permission bits", () => {
     const modes: number[] = [];
@@ -253,7 +283,6 @@ describe("metadata", () => {
       files: { ...harness.files, chmod(target, mode) { modes.push(mode); harness.files.chmod(target, mode); } },
       errno: kit.errno,
       directory: kit.directory,
-      utimes: () => undefined,
     });
     recording.writeFile("/mode", "x");
     recording.chmod("/mode", 0o100640);
@@ -274,32 +303,73 @@ describe("metadata", () => {
     expect(fs.statSync(path.join(root, "t")).size).toBe(6);
   });
 
-  it("hands utimes to the sidecar with the resolved path, in milliseconds", () => {
+  it("sets file times natively: dates to the millisecond, on the resolved path, following links", () => {
     const vmfs = adapter();
     vmfs.writeFile("/times", "x");
     vmfs.utimes("/times", 1_700_000_000_000, 1_700_000_001_500);
-    expect(utimes).toEqual([{ path: `${root}/times`, atimeMs: 1_700_000_000_000, mtimeMs: 1_700_000_001_500 }]);
+    expect(harness.times).toEqual([{ path: `${root}/times`, access: new Date(1_700_000_000_000), modification: new Date(1_700_000_001_500), options: { followLinks: true } }]);
+    const stat = fs.statSync(path.join(root, "times"));
+    expect([stat.atimeMs, stat.mtimeMs]).toEqual([1_700_000_000_000, 1_700_000_001_500]);
   });
 
-  it("reports a failing utimes sidecar as an Emscripten errno", () => {
+  it("keeps a time to the millisecond and never hands over an invalid date", () => {
+    const vmfs = adapter();
+    vmfs.writeFile("/times", "x");
+    vmfs.utimes("/times", 1_700_000_000_000.9, 1_700_000_001_500.4);
+    const milliseconds = (time: unknown): unknown => time instanceof Date ? time.getTime() : time;
+    expect(harness.times.map(call => [milliseconds(call.access), milliseconds(call.modification)])).toEqual([[1_700_000_000_000, 1_700_000_001_500]]);
+    harness.times.length = 0;
+    for (const [atime, mtime] of [[Number.NaN, 1], [1, Number.NaN], [Number.POSITIVE_INFINITY, 1], [1, 8.64e15 + 1], [-8.64e15 - 1, 1]] as const) {
+      expect(() => { vmfs.utimes("/times", atime, mtime); }, `${String(atime)} ${String(mtime)}`).toThrow("Invalid database file time");
+    }
+    expect(harness.times).toEqual([]);
+  });
+
+  it("reports a failing utimes as an Emscripten errno", () => {
     const failing = new VMPostgresFS(root, {
-      files: harness.files,
+      files: { ...harness.files, utimes() { throw new LinuxError(13); } },
       errno: kit.errno,
       directory: kit.directory,
-      utimes: () => { throw new LinuxError(13); },
     });
     expect(codeOf(() => { failing.utimes("/x", 1, 2); })).toBe(2);
   });
 
-  it("reports a failure of the helper process like a failure of the host", () => {
-    const failing = new VMPostgresFS(root, {
-      files: harness.files,
-      errno: kit.errno,
-      directory: kit.directory,
-      utimes: () => { throw new HelperError("Permission denied", 13); },
-    });
-    expect(codeOf(() => { failing.utimes("/x", 1, 2); })).toBe(2);
-    expect(() => { failing.utimes("/x", 1, 2); }).toThrow("Permission denied");
+  it("refuses to change times after a flush failure that nobody has heard about yet", async () => {
+    const vmfs = adapter();
+    vmfs.writeFile("/times", "x");
+    harness.failFsync = true;
+    await vmfs.syncToFs(true);
+    harness.failFsync = false;
+    expect(codeOf(() => { vmfs.utimes("/times", 1, 2); })).toBe(29);
+    expect(harness.times).toEqual([]);
+  });
+});
+
+describe("restoring a data directory", () => {
+  it("gives the host the exact times PGlite restores for every file of the archive it loads", async () => {
+    const source = await PGlite.create();
+    await source.exec("CREATE TABLE restored(n integer); INSERT INTO restored VALUES (1), (2), (3);");
+    const archive = await source.dumpDataDir("none");
+    await source.close();
+    const files = tarEntries(new Uint8Array(await archive.arrayBuffer())).filter(entry => entry.kind === "file");
+    expect(files.length).toBeGreaterThan(100);
+
+    const db = await PGlite.create({ fs: adapter(), loadDataDir: archive });
+    try {
+      expect((await db.query("SELECT n FROM restored ORDER BY n")).rows).toEqual([{ n: 1 }, { n: 2 }, { n: 3 }]);
+      const received = new Map(harness.times.map(call => [call.path, call]));
+      for (const file of files) {
+        const call = received.get(`${root}${file.name}`);
+        expect(call, file.name).toBeDefined();
+        expect(call?.access, file.name).toEqual(new Date(file.mtime * 1000));
+        expect(call?.modification, file.name).toEqual(new Date(file.mtime * 1000));
+        expect(call?.options, file.name).toEqual({ followLinks: true });
+      }
+      const stat = fs.statSync(path.join(root, "PG_VERSION"));
+      expect(stat.mtimeMs).toBe((files.find(file => file.name === "/PG_VERSION")?.mtime ?? 0) * 1000);
+    } finally {
+      await db.close();
+    }
   });
 });
 
@@ -333,7 +403,6 @@ describe("directories", () => {
       files: { ...harness.files, readdir: () => [".", "..", "x"].map(name => ({ name, nameBytes: new TextEncoder().encode(name), type: 8 })) },
       errno: kit.errno,
       directory: kit.directory,
-      utimes: () => undefined,
     });
     expect(dotted.readdir("/")).toEqual(["x"]);
   });

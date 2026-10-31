@@ -4,7 +4,7 @@ import { fingerprint } from "./fingerprint.ts";
 import { decodeMarker, encodeMarker, MARKER_NAME, MAX_MARKER_BYTES } from "./marker.ts";
 import type { Kit, SyncFiles } from "./ports.ts";
 import { VMPostgresFS } from "./vm-fs.ts";
-import type { Utimes, VmFiles } from "./vm-fs.ts";
+import type { VmFiles } from "./vm-fs.ts";
 
 /** The VM file operations opening a database needs. */
 export type StorageFiles = VmFiles & Pick<SyncFiles, "readFile" | "writeFile" | "writeAll">;
@@ -12,7 +12,6 @@ export type StorageFiles = VmFiles & Pick<SyncFiles, "readFile" | "writeFile" | 
 export interface StorageHost {
   readonly files: StorageFiles;
   readonly kit: Pick<Kit, "errno" | "directory">;
-  readonly utimes: Utimes;
   readonly log: (line: string) => void;
 }
 
@@ -62,7 +61,7 @@ function exists(host: StorageHost, path: string): boolean {
 }
 
 function filesystem(host: StorageHost, root: string): VMPostgresFS {
-  return new VMPostgresFS(root, { files: host.files, errno: host.kit.errno, directory: host.kit.directory, utimes: host.utimes, log: host.log });
+  return new VMPostgresFS(root, { files: host.files, errno: host.kit.errno, directory: host.kit.directory, log: host.log });
 }
 
 /** Creates the directories above the data directory, flushing each new entry into its parent. */

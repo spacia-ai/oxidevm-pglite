@@ -63,9 +63,10 @@ async function readRequest(source: FrameSource, signal: AbortSignal, framing: Fr
 /**
  * The handler of the `oxidevm-sql/1` endpoint: one request per connection, a length-prefixed JSON object
  * `{ sql, params }`, answered by a length-prefixed `{ ok: true, result }` or `{ ok: false, error }`. A client
- * that goes away before it has sent a whole request gets no reply (there is nobody to read it, and writing
- * to a closed socket ends the process until engine API 144). A request that outlives its deadline or the
- * module gets none either: the handler fails and the runner closes the connection.
+ * that goes away before it has sent a whole request gets no reply (there is nobody to read it). A client that
+ * goes away before it has read its reply makes that one write fail with EPIPE, which the runner reports for
+ * this connection only. A request that outlives its deadline or the module gets no reply either: the handler
+ * fails and the runner closes the connection.
  */
 export function jsonEndpoint(deps: JsonEndpointDeps): (connection: Connection) => Promise<void> {
   return async connection => {
