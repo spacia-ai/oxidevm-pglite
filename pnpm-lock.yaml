@@ -15,11 +15,11 @@ importers:
         specifier: 10.0.1
         version: 10.0.1(eslint@10.7.0)
       '@oxidevm/cli':
-        specifier: 0.1.0-alpha.303
-        version: 0.1.0-alpha.303
+        specifier: 0.0.7
+        version: 0.0.7
       '@oxidevm/sdk':
-        specifier: 0.1.0-alpha.303
-        version: 0.1.0-alpha.303
+        specifier: 0.0.7
+        version: 0.0.7
       '@types/emscripten':
         specifier: 1.41.6
         version: 1.41.6
@@ -496,13 +496,13 @@ packages:
     resolution: {integrity: sha512-XlOlEbQcE9fmuXxrVTXCTlG2nlRXa9Rj3rr5Ue/+tX+nmkgbX720YHh0VR3hBF9xDvwnb8D2shVGOwNx+ulArw==}
     engines: {node: '>= 20.19.0'}
 
-  '@oxidevm/cli@0.1.0-alpha.303':
-    resolution: {integrity: sha512-Pts0hGm+RnFu0frDvBpOACbY4BOxRMbe5q6ly6mzJyw2mw7OGreHh4PTfYMDkjfgFAx8llVXbZpcU0vJ9zYCWQ==}
+  '@oxidevm/cli@0.0.7':
+    resolution: {integrity: sha512-y5CxEahg4+d+A9fL262TlKhWm3gLyairNTsf1hJuOj7crQSCn9zkmjShGWDK8q50nVhAZ7ik5Qy4B6E3/RYOaA==}
     engines: {node: '>=24'}
     hasBin: true
 
-  '@oxidevm/sdk@0.1.0-alpha.303':
-    resolution: {integrity: sha512-Wthh6sBU14ivS5iNbkZf8JIQ+3BMi9h+34ksdeaz6CPqjptgTbb1khujqQk+SlOPvO5glq1htHEWsys+sOzeoQ==}
+  '@oxidevm/sdk@0.0.7':
+    resolution: {integrity: sha512-gHkyXU4EPad+GIq7ijpz7XuwwAX25pUd2Fdn4J3A3/VQd970GtJWjW9CXb722sS1s3SrJ9qs6dRtxtmY9mK36g==}
 
   '@pkgjs/parseargs@0.11.0':
     resolution: {integrity: sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==}
@@ -1743,13 +1743,13 @@ snapshots:
 
   '@noble/hashes@2.0.1': {}
 
-  '@oxidevm/cli@0.1.0-alpha.303':
+  '@oxidevm/cli@0.0.7':
     dependencies:
-      '@oxidevm/sdk': 0.1.0-alpha.303
+      '@oxidevm/sdk': 0.0.7
     transitivePeerDependencies:
       - supports-color
 
-  '@oxidevm/sdk@0.1.0-alpha.303':
+  '@oxidevm/sdk@0.0.7':
     dependencies:
       '@babel/generator': 7.29.7
       '@babel/parser': 7.29.7

@@ -2,13 +2,10 @@
 # the draft is downloaded again and checked against its own SHA256SUMS before it becomes visible.
 # Dependencies install and build in a job that can only read; the job that may write to the repository runs
 # nothing but the gh commands, so no install script or dependency code ever sees its token.
-# This workflow starts on request only. The @oxidevm packages of the CLI that generated this project are on a private registry
-# that GitHub's runners cannot reach, so an automatic run would fail on every push. Give it the push (and pull_request, or tag)
-# trigger of the public template once the packages install from a registry the runner can reach.
-# Start it from a tag: pick the tag, not a branch, in the Run workflow dialog, because the first check compares the tag with the version.
 name: release
 on:
-  workflow_dispatch:
+  push:
+    tags: ["v*"]
 permissions:
   contents: read
 jobs:

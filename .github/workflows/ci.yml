@@ -1,9 +1,8 @@
-# This workflow starts on request only. The @oxidevm packages of the CLI that generated this project are on a private registry
-# that GitHub's runners cannot reach, so an automatic run would fail on every push. Give it the push (and pull_request, or tag)
-# trigger of the public template once the packages install from a registry the runner can reach.
 name: ci
 on:
-  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
 permissions:
   contents: read
 jobs:

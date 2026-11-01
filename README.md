@@ -20,7 +20,7 @@ oxidevm wasm add github:spacia-ai/oxidevm-pglite@v0.1.0
 
 The command shows what the module declares and asks before it installs anything. It needs a self-hosted runtime on a
 cross-origin isolated page (see the [module documentation](https://oxidevm.dev/docs)) and Userspace API 144 or later
-(`@oxidevm/sdk` 0.1.0-alpha.301 and up: native `utimes` and `noSignal` socket writes).
+(`@oxidevm/sdk` 0.0.7 and up: native `utimes` and `noSignal` socket writes).
 
 ```ts
 import { spawnModule, stopModule } from "@oxidevm/sdk/wasm";
@@ -152,7 +152,7 @@ it, atomically and only when it differs. Deliberate differences:
 ## Develop it
 
 ```sh
-pnpm install                     # needs the private registry for @oxidevm/* (see below)
+pnpm install
 node scripts/fetch-upstream.ts   # mirrors pglite.wasm, initdb.wasm, pglite.data; checks them against upstream/lock.json
 pnpm run check                   # tsc (module, tests, scripts), ESLint (strict type-checked, no warnings), the lock, oxidevm wasm build --check
 pnpm test                        # unit tests: real PGlite on a directory of this machine, the Python client with python3
@@ -161,10 +161,8 @@ pnpm run mutate                  # mutation test of the ported logic (needs a cl
 pnpm test:browser                # real engine + Chromium, see below
 ```
 
-`@oxidevm/sdk` and `@oxidevm/cli` are exact devDependencies. Until they are published to npm they come from a private
-registry: put `@oxidevm:registry=<registry URL>` in an `.npmrc` that stays untracked (the repository ignores it), and allow
-the build script of `esbuild` in an untracked `pnpm-workspace.yaml` (`allowBuilds: { esbuild: true }`). `pnpm-lock.yaml` is
-committed.
+`@oxidevm/sdk` and `@oxidevm/cli` are exact devDependencies, installed from npm. The committed `pnpm-workspace.yaml` allows
+the build script of `esbuild`, and `pnpm-lock.yaml` is committed.
 
 ### Real-engine tests
 
@@ -211,8 +209,8 @@ gh release edit v0.1.0 --draft=false
 
 `pnpm run release` prints these steps and runs none of them. The `release` workflow does the same in GitHub Actions, in two
 jobs: a read-only one fetches the mirrored WebAssembly and builds, and a second one, which installs nothing, drafts, verifies
-and publishes. Both workflows start on request only (run `release` from the tag): the install step needs `@oxidevm/sdk` and
-`@oxidevm/cli`, which only a private registry serves today, so a push trigger would fail on every push. Consumers install with
+and publishes. The `ci` workflow runs on pushes to `main` and on pull requests, and `release` runs when a `v*` tag is pushed.
+Consumers install with
 `oxidevm wasm add github:spacia-ai/oxidevm-pglite@v0.1.0`.
 
 ### Build warnings

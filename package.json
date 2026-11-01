@@ -15,8 +15,8 @@
   "devDependencies": {
     "@electric-sql/pglite": "0.5.14",
     "@eslint/js": "10.0.1",
-    "@oxidevm/cli": "0.1.0-alpha.303",
-    "@oxidevm/sdk": "0.1.0-alpha.303",
+    "@oxidevm/cli": "0.0.7",
+    "@oxidevm/sdk": "0.0.7",
     "@types/emscripten": "1.41.6",
     "@types/node": "24.13.3",
     "eslint": "10.7.0",
