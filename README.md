@@ -158,6 +158,7 @@ pnpm run check                   # tsc (module, tests, scripts), ESLint (strict 
 pnpm test                        # unit tests: real PGlite on a directory of this machine, the Python client with python3
 pnpm run build                   # writes dist/: module.json, adapter.mjs, the artifacts and SHA256SUMS
 pnpm run mutate                  # mutation test of the ported logic (needs a clean tree)
+pnpm run test:conformance        # oxidevm wasm test: the runner's contract, in Chromium
 pnpm test:browser                # real engine + Chromium, see below
 ```
 
@@ -178,21 +179,23 @@ the scenarios). It needs:
   (needs Docker) and checked against `test/postgres-clients.lock.json`. It is a test tool only: it contains libraries under
   other licenses (readline is GPL) and is never committed or released.
 
-Two facts about this engine (Userspace API 144) shaped the clients. A peer that closed cleanly answers a server's first
+One fact about this engine (Userspace API 144) shaped the clients. A peer that closed cleanly answers a server's first
 write normally and its second with `EPIPE`, and the write that gets `EPIPE` ends the whole process with SIGPIPE unless it
 passed `noSignal`; a peer that reset the connection answers the first write with `ECONNRESET` and only then `EPIPE`.
 That is why the suite has a client that closes cleanly: with `{ noSignal: true }` taken out of `src/client-sink.ts`, the
 reset and killed-`psql` cases still pass and the clean close fails with `the module ended instead of failing that one
-connection: signal 13`. And a 30 MB `write(2)` to `/dev/null` returns 16 777 216, and `psql -A -t` with its output on
-`/dev/null` fails with `could not print result table: Invalid argument`, so the tests send `psql` output to a file.
+connection: signal 13`. With `@oxidevm/sdk` 0.0.7, a 30 MB `write(2)` to `/dev/null` returned 16 777 216 and `psql -A -t`
+with its output on `/dev/null` failed with `could not print result table: Invalid argument`; the engine that 0.0.8 pins
+accepts both whole, and the core suite checks it with `psql -o /dev/null` and 30 MB `write(2)` and `writev(2)` calls.
 
-The suites: **core** (start and stop, the JSON reply shape, the Python client, limits, `psql`, psycopg with prepared
-statements, binary, `COPY` in and out, 2 MiB and 8 MiB results, an idle connection and a vanished client, session isolation,
-clients that hang up in the middle of a large result while another keeps getting answers (one that closes cleanly right
-after asking for 30 MB, one that resets the connection after 64 KiB, and the real `psql` killed while it receives a 200 MB
-`COPY`), JSON clients that hang up before reading their reply, the four-client cap, a second start failing busy, a killed
-service and its stale socket, restart, relaxed durability), **crash** (kill the renderer with a transaction open; the committed row survives, the open
-transaction rolls back) and **migration** (a legacy IndexedDB database moves into the workspace).
+The suites: **core** (start and stop, the JSON reply shape, the Python client, limits, `psql`, large writes to
+`/dev/null`, psycopg with prepared statements, binary, `COPY` in and out, 2 MiB and 8 MiB results, an idle connection
+and a vanished client, session isolation, clients that hang up in the middle of a large result while another keeps
+getting answers (one that closes cleanly right after asking for 30 MB, one that resets the connection after 64 KiB, and
+the real `psql` killed while it receives a 200 MB `COPY`), JSON clients that hang up before reading their reply, the
+four-client cap, a second start failing busy, a killed service and its stale socket, restart, relaxed durability),
+**crash** (kill the renderer with a transaction open; the committed row survives, the open transaction rolls back) and
+**migration** (a legacy IndexedDB database moves into the workspace).
 
 ## Release
 

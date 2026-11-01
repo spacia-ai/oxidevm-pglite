@@ -9,14 +9,15 @@
     "fetch-upstream": "node scripts/fetch-upstream.ts",
     "release": "oxidevm wasm release",
     "test": "vitest run",
+    "test:conformance": "oxidevm wasm build && oxidevm wasm test",
     "test:browser": "node test/browser/run.ts",
     "mutate": "node scripts/mutate.ts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.14",
     "@eslint/js": "10.0.1",
-    "@oxidevm/cli": "0.0.7",
-    "@oxidevm/sdk": "0.0.7",
+    "@oxidevm/cli": "0.0.8",
+    "@oxidevm/sdk": "0.0.8",
     "@types/emscripten": "1.41.6",
     "@types/node": "24.13.3",
     "eslint": "10.7.0",

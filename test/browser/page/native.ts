@@ -1,6 +1,7 @@
 import type { UserspaceVM } from "@oxidevm/sdk";
 import type { SuiteConfig } from "./protocol";
 import { python, run } from "./util";
+import type { Run } from "./util";
 
 /** Where the native clients are unpacked, and the environment that finds their libraries. */
 export const CLIENTS = "/workspace/_oxidevm/clients";
@@ -57,11 +58,24 @@ export async function installClients(vm: UserspaceVM, config: SuiteConfig): Prom
   await python(vm, `import tarfile, os\nos.makedirs(${JSON.stringify(CLIENTS)}, exist_ok=True)\ntarfile.open('/workspace/_oxidevm/postgres-clients.tar.gz').extractall(${JSON.stringify(CLIENTS)}, filter='data')`);
 }
 
+const psqlArgs = (commands: readonly string[], output: readonly string[] = []): string[] =>
+  [POSTGRES_URL, "-X", "-A", "-t", "-v", "ON_ERROR_STOP=1", ...output, ...commands.flatMap(command => ["-c", command])];
+
 export async function psql(vm: UserspaceVM, ...commands: readonly string[]): Promise<string> {
-  const result = await run(vm, { command: `${CLIENTS}/bin/psql`, args: [POSTGRES_URL, "-X", "-A", "-t", "-v", "ON_ERROR_STOP=1", ...commands.flatMap(command => ["-c", command])], env: CLIENT_ENV });
+  const result = await run(vm, { command: `${CLIENTS}/bin/psql`, args: psqlArgs(commands), env: CLIENT_ENV });
   if (result.status !== 0) throw new Error(`psql exited ${String(result.status)}: ${result.stderr.trim().slice(-1500)}`);
   return result.stdout.trim();
 }
+
+/** psql with its query output on /dev/null (`-o /dev/null`), which musl's stdio writes with `writev`. */
+export function psqlToDevNull(vm: UserspaceVM, command: string): Promise<Run> {
+  return run(vm, { command: `${CLIENTS}/bin/psql`, args: psqlArgs([command], ["-o", "/dev/null"]), env: CLIENT_ENV });
+}
+
+/** A 30 MB `write(2)` and a 30 MB `writev(2)` to /dev/null; Linux returns both whole. */
+export const DEV_NULL_WRITES = String.raw`import os
+fd = os.open('/dev/null', os.O_WRONLY)
+print(os.write(fd, b'x' * 30_000_000), os.writev(fd, [b'x' * 20_000_000, b'y' * 10_000_000]))`;
 
 /**
  * The psycopg session of the sample, unchanged in what it exercises: prepared statements, binary results, COPY in
@@ -212,7 +226,7 @@ print(json.dumps(outcomes))
 
 /**
  * The real psql, killed as soon as 4 MiB of a 200 MB COPY result have reached it, so that the module is in the middle
- * of streaming when the client disappears. psql writes to a file (writes to /dev/null are not usable: see the README).
+ * of streaming when the client disappears. psql writes to a file so that the test can see how much has arrived.
  */
 export const PSQL_KILLED = String.raw`import os, subprocess, time
 path = '/tmp/psql-killed.out'

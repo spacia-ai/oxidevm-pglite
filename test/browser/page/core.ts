@@ -1,6 +1,6 @@
 import type { UserspaceVM } from "@oxidevm/sdk";
 import { spawnModule, stopModule } from "@oxidevm/sdk/wasm";
-import { CLIENT_ENV, CLIENT_IMPORT, DRIVER, JSON_HANGUP, JSON_POLL, NATIVE_CLEAN_HANGUP, NATIVE_HANGUP, PSQL_KILLED, exchangeOf, installClients, psql, rawExchange, sqlRequest } from "./native";
+import { CLIENT_ENV, CLIENT_IMPORT, DEV_NULL_WRITES, DRIVER, JSON_HANGUP, JSON_POLL, NATIVE_CLEAN_HANGUP, NATIVE_HANGUP, PSQL_KILLED, exchangeOf, installClients, psql, psqlToDevNull, rawExchange, sqlRequest } from "./native";
 import { pglite } from "./oxidevm.modules.generated";
 import type { ScenarioResult, SuiteConfig } from "./protocol";
 import { describeExit, expect, expectEqual, expectFailure, openVM, python, run, runScenarios, sha256, until } from "./util";
@@ -123,6 +123,14 @@ except pg.PGliteError as error:
       const out = await psql(vm, "SELECT version(); SELECT 42");
       expect(/wasm32/u.test(out) && /PostgreSQL 18\.6/u.test(out) && out.endsWith("42"), out);
       return out.split("\n")[0] ?? "";
+    }],
+    ["psql: a 30 MB value printed to /dev/null, and 30 MB write(2) and writev(2) there, are accepted whole", async () => {
+      await ensureClients();
+      const printed = await psqlToDevNull(vm, "SELECT repeat('x', 30000000)");
+      expect(printed.status === 0, `psql with its output on /dev/null exited ${String(printed.status)}: ${printed.stderr.trim().slice(-500)}`);
+      const counts = await python(vm, DEV_NULL_WRITES);
+      expectEqual(counts, "30000000 30000000", "what write(2) and writev(2) of 30 MB to /dev/null returned");
+      return `psql exited 0; write and writev returned ${counts}`;
     }],
     ["psycopg + session isolation: extended protocol, binary, COPY, large results, idle connection, vanished client", async () => {
       await ensureClients();
