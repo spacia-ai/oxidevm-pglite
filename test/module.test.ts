@@ -18,7 +18,7 @@ describe("the manifest", () => {
   });
 
   it("is a service for Emscripten-built WebAssembly, exclusive per workspace, serving at most four clients", () => {
-    expect(manifest).toMatchObject({ id: "pglite", version: "0.1.0", abi: "emscripten", process: { kind: "service", exclusive: "workspace" }, limits: { clients: 4, startupMs: 300_000 } });
+    expect(manifest).toMatchObject({ id: "pglite", version: "0.2.0", abi: "emscripten", process: { kind: "service", exclusive: "workspace" }, limits: { clients: 4, startupMs: 300_000 } });
   });
 
   it("exposes the JSON endpoint on a Unix socket and the PostgreSQL protocol on the standard port", () => {
@@ -29,10 +29,10 @@ describe("the manifest", () => {
     expect(manifest.expose.sql.path).toBe(SQL_SOCKET);
   });
 
-  it("asks only for what the adapter uses: files, the process id, and no program of the image", () => {
+  it("asks only for what the adapter uses: files and the process id; no program of the image, no browser storage, no network", () => {
     expect([...manifest.requires.host].sort()).toEqual(["files.sync", "process.info"]);
-    expect([...manifest.requires.browser].sort()).toEqual(["indexeddb", "web-locks"]);
-    expect(Object.keys(manifest.requires).sort()).toEqual(["browser", "host"]);
+    // No browser storage (the module frame has neither IndexedDB nor Web Locks) and no network reach token.
+    expect(Object.keys(manifest.requires)).toEqual(["host"]);
     expect(manifest.mounts).toEqual([{ guest: "/workspace", access: "rw", durability: "fsync" }]);
     expect(manifest.state.durable).toEqual(["/workspace/pgdata"]);
   });
@@ -41,7 +41,7 @@ describe("the manifest", () => {
     expect(manifest.options).toEqual({
       dataDir: { type: "string", maxLength: 255, default: "/workspace/pgdata" },
       durability: { type: "enum", values: ["relaxed", "strict"], default: "strict" },
-      legacyIndexedDb: { type: "string", maxLength: 128, default: "" },
+      importArchive: { type: "string", maxLength: 255, default: "" },
     });
   });
 

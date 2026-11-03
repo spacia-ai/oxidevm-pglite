@@ -83,6 +83,9 @@ function convert(value: fs.BigIntStats): LinuxFileStat {
 }
 
 /** @param translate maps the path a program asks for to the path on this machine (identity by default). */
+/** The engine answers one read with at most 16 MiB and refuses a larger `readFile` limit; the test files do too. */
+const MAX_HOST_IO_BYTES = 16 * 1024 ** 2;
+
 export function createNodeFiles(translate: (path: string) => string = path => path): NodeFilesHarness {
   const real = (path: LinuxPath): string => translate(text(path));
   const positions = new Map<number, number>(), paths = new Map<number, string>();
@@ -110,6 +113,7 @@ export function createNodeFiles(translate: (path: string) => string = path => pa
         return BigInt(base + Number(offset));
       },
       read(fd, count) {
+        if (!Number.isInteger(count) || count < 0 || count > MAX_HOST_IO_BYTES) throw new RangeError(`read count must be an integer from 0 to ${String(MAX_HOST_IO_BYTES)}`);
         const buffer = Buffer.alloc(count), position = positions.get(fd) ?? 0;
         const got = linux(() => fs.readSync(fd, buffer, 0, count, position));
         positions.set(fd, position + got);
@@ -154,6 +158,7 @@ export function createNodeFiles(translate: (path: string) => string = path => pa
         linux(() => { if (options?.followLinks === false) fs.lutimesSync(real(path), accessed, modified); else fs.utimesSync(real(path), accessed, modified); });
       },
       readFile: (path, maxBytes) => {
+        if (maxBytes !== undefined && (!Number.isInteger(maxBytes) || maxBytes < 0 || maxBytes > MAX_HOST_IO_BYTES)) throw new RangeError(`readFile limit must be an integer from 0 to ${String(MAX_HOST_IO_BYTES)}`);
         const bytes = linux(() => fs.readFileSync(real(path)));
         if (maxBytes !== undefined && bytes.length > maxBytes) throw new LinuxError(27);
         return bytes;

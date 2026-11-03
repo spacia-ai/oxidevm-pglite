@@ -7,11 +7,13 @@ const valid: StorageMarker = { version: 1, source: "new", fingerprint, backup: n
 const bytes = (value: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(value));
 
 describe("storage marker", () => {
-  it("round-trips with the key order the sample wrote", () => {
+  it("round-trips with the key order the sample wrote, for each source, the 0.1.0 migration included", () => {
     expect(new TextDecoder().decode(encodeMarker(valid))).toBe(`{"version":1,"source":"new","fingerprint":"${fingerprint}","backup":null}`);
     expect(decodeMarker(encodeMarker(valid))).toEqual(valid);
     const migrated: StorageMarker = { version: 1, source: "indexeddb", fingerprint, backup: "/workspace/_oxidevm/pglite-indexeddb-1.tar" };
     expect(decodeMarker(encodeMarker(migrated))).toEqual(migrated);
+    const imported: StorageMarker = { version: 1, source: "archive", fingerprint, backup: "/workspace/pglite-import.tar" };
+    expect(decodeMarker(encodeMarker(imported))).toEqual(imported);
   });
 
   it("refuses another version as unsupported", () => {

@@ -15,14 +15,12 @@ function quote(identifier: string): string {
   return `"${identifier.replaceAll('"', '""')}"`;
 }
 
-function hex(bytes: ArrayBuffer): string {
-  return Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, "0")).join("");
-}
-
 /**
  * A SHA-256 over what makes a database what it is: its tables, columns, constraints, sequences, views and
- * the digest of every row. The migration compares the legacy database with the copy it made. 64-bit values
- * (sequence limits) arrive as `bigint`, which JSON cannot hold, so they are written as text.
+ * the digest of every row, recorded in the storage marker. 64-bit values (sequence limits) arrive as `bigint`,
+ * which JSON cannot hold, so they are written as text. PostgreSQL computes the SHA-256 of the UTF-8 text, the
+ * same digest WebCrypto gave 0.1.0: the module frame is not a secure context in Chromium, so `crypto.subtle`
+ * does not exist there.
  */
 export async function fingerprint(db: Queryable): Promise<string> {
   const tables = await db.query<{ schema: string; name: string }>(TABLES);
@@ -35,5 +33,7 @@ export async function fingerprint(db: Queryable): Promise<string> {
     parts.push({ table, ...result.rows[0] });
   }
   const text = JSON.stringify(parts, (_key, value: unknown) => typeof value === "bigint" ? value.toString() : value);
-  return hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
+  const digest = (await db.query<{ digest: string }>("SELECT encode(sha256(convert_to($1, 'UTF8')), 'hex') AS digest", [text])).rows[0]?.digest;
+  if (digest === undefined) throw new Error("PostgreSQL did not return the fingerprint digest");
+  return digest;
 }

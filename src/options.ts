@@ -8,18 +8,27 @@ const WORKSPACE = "/workspace";
  */
 export function resolveDataDir(value: string): string {
   const refusal = new Error("The dataDir option must be an absolute path inside /workspace, outside /workspace/_oxidevm, without empty, . or .. segments");
-  if (!value.startsWith(`${WORKSPACE}/`)) throw refusal;
-  const segments = value.slice(WORKSPACE.length + 1).split("/");
-  if (segments.some(segment => segment === "" || segment === "." || segment === ".." || segment.includes("\0"))) throw refusal;
+  if (!insideWorkspace(value)) throw refusal;
   if (value === OXIDEVM_DIRECTORY || value.startsWith(`${OXIDEVM_DIRECTORY}/`)) throw refusal;
   return value;
 }
 
-/** The `legacyIndexedDb` option: the name of an IndexedDB database to migrate from, or `undefined` for none (an empty name). */
-export function resolveLegacyName(value: string): string | undefined {
-  for (const char of value) {
-    const code = char.codePointAt(0) ?? 0;
-    if (code < 0x20 || code === 0x7f) throw new Error("The legacyIndexedDb option must not contain control characters");
+/** True for an absolute path inside the workspace without empty, `.` or `..` segments. */
+function insideWorkspace(value: string): boolean {
+  if (!value.startsWith(`${WORKSPACE}/`)) return false;
+  const segments = value.slice(WORKSPACE.length + 1).split("/");
+  return !segments.some(segment => segment === "" || segment === "." || segment === ".." || segment.includes("\0"));
+}
+
+/**
+ * The `importArchive` option: the guest path of a PGlite data-directory archive to load when the data directory is
+ * created, or `undefined` for none (an empty value). It is an absolute, normalized path inside the workspace and
+ * outside the data directory it is loaded into.
+ */
+export function resolveImportArchive(value: string, dataDir: string): string | undefined {
+  if (value === "") return undefined;
+  if (!insideWorkspace(value) || value === dataDir || value.startsWith(`${dataDir}/`)) {
+    throw new Error("The importArchive option must be empty or an absolute path inside /workspace, outside the data directory, without empty, . or .. segments");
   }
-  return value === "" ? undefined : value;
+  return value;
 }

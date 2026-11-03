@@ -136,8 +136,16 @@ except pg.PGliteError as error:
       await ensureClients();
       await vm.workspace.writeText("_oxidevm/driver-test.py", DRIVER);
       await vm.workspace.remove("_oxidevm/pg-idle-ready").catch(() => undefined);
-      const driver = run(vm, { command: "/usr/bin/python3", args: ["/workspace/_oxidevm/driver-test.py"], env: CLIENT_ENV, signal: AbortSignal.timeout(600_000) });
-      await until(async () => (await vm.workspace.readText("_oxidevm/pg-idle-ready").catch(() => "")) === "ready", "the driver to reach its idle connection", 300);
+      // Firefox runs this driver several times slower than Chromium; the budget covers both, and a driver that ends early is reported with its output.
+      const driver = run(vm, { command: "/usr/bin/python3", args: ["/workspace/_oxidevm/driver-test.py"], env: CLIENT_ENV, signal: AbortSignal.timeout(1_800_000) });
+      let ended = false;
+      void driver.then(() => { ended = true; }, () => { ended = true; });
+      const ready = async (): Promise<boolean> => (await vm.workspace.readText("_oxidevm/pg-idle-ready").catch(() => "")) === "ready";
+      await until(async () => ended || await ready(), "the driver to reach its idle connection", 1200);
+      if (!await ready()) {
+        const early = await driver;
+        throw new Error(`the driver ended before its idle connection: ${String(early.status)} ${early.stdout.slice(-500)} ${early.stderr.slice(-1500)}`);
+      }
       const busy = exchangeOf(await python(vm, rawExchange(sqlRequest("SELECT 42"))));
       expectEqual(busy.reply, { ok: false, error: "A native PostgreSQL connection owns the database. Close it before using oxidevm.query()." }, "isolation reply");
       const finished = await driver;
@@ -238,11 +246,18 @@ except pg.PGliteError as error:
       await psql(vm, "INSERT INTO wire_data VALUES (4, 'before the kill')");
       await running().kill("SIGKILL");
       const exit = await running().exit;
+      expect(exit.kind === "signaled" && exit.signalNumber === 9, describeExit(exit));
       const stale = await socketState(vm);
+      // The kill gave the service no chance to unlink its socket: this is the stale-socket case the next start must handle.
+      expectEqual(stale, "socket", "socket left by the killed service");
       service = await start(vm);
+      watchService(service, stderr);
       const count = await psql(vm, "SELECT count(*) FROM wire_data");
       expectEqual(count, "4", "rows after the restart");
-      return `${describeExit(exit)}, socket ${stale}, ${count} rows`;
+      // The Unix socket itself was replaced, not only the TCP port: the JSON endpoint answers on it.
+      const json = await python(vm, `${CLIENT_IMPORT}print(pg.query("SELECT count(*)::int AS n FROM wire_data")["rows"])`);
+      expectEqual(json, "[{'n': 4}]", "JSON endpoint after the restart");
+      return `${describeExit(exit)}, socket ${stale} before the restart, ${count} rows over TCP and ${json} over the replaced socket`;
     }],
     ["stop: closing standard input stops the service, removes the socket and closes the port", async () => {
       const exit = await stopModule(running());

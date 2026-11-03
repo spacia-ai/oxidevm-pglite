@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { PGlite } from "@electric-sql/pglite";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import definition from "../module.ts";
 import { concat, join } from "../src/bytes.ts";
 import { fakeConnection, frame, replyOf } from "./support/connection.ts";
@@ -7,7 +8,7 @@ import { FakeVm } from "./support/fake-host.ts";
 import { backendMessages, cstring, dataRow, int16, message, query, startup, terminate } from "./support/wire.ts";
 
 const vms: FakeVm[] = [];
-afterEach(() => { for (const vm of vms.splice(0)) vm.dispose(); });
+afterEach(() => { vi.unstubAllGlobals(); for (const vm of vms.splice(0)) vm.dispose(); });
 
 function vm(options: ConstructorParameters<typeof FakeVm>[0] = {}): FakeVm {
   const created = new FakeVm(options);
@@ -109,6 +110,41 @@ describe("starting the adapter", () => {
   });
 });
 
+describe("importing a database a page exported", () => {
+  it("loads the archive once, keeps it, and opens the same database at the next start", async () => {
+    const source = await PGlite.create();
+    await source.exec("CREATE TABLE preserved(id integer PRIMARY KEY, label text); INSERT INTO preserved VALUES (42, 'original data');");
+    const archive = new Uint8Array(await (await source.dumpDataDir("none")).arrayBuffer());
+    await source.close();
+    const machine = vm({ importArchive: "/workspace/pglite-import.tar" });
+    machine.harness.files.writeFile("/workspace/pglite-import.tar", archive);
+
+    const hooks = await definition.adapter(machine.host());
+    expect(await ask(hooks, "SELECT * FROM preserved")).toMatchObject({ ok: true, result: { rows: [{ id: 42, label: "original data" }] } });
+    await ask(hooks, "INSERT INTO preserved VALUES (43, 'added')");
+    await hooks.close?.();
+    expect(JSON.parse(machine.read("/workspace/pgdata/.oxidevm-storage.json"))).toMatchObject({ version: 1, source: "archive", backup: "/workspace/pglite-import.tar" });
+    expect(machine.exists("/workspace/pglite-import.tar")).toBe(true);
+
+    const again = await definition.adapter(machine.host());
+    expect(await ask(again, "SELECT id FROM preserved ORDER BY id")).toMatchObject({ ok: true, result: { rows: [{ id: 42 }, { id: 43 }] } });
+    await again.close?.();
+  });
+});
+
+describe("the module frame's limits", () => {
+  it("creates, serves and closes a database without crypto.subtle or crypto.randomUUID, which an opaque-origin worker lacks", async () => {
+    vi.stubGlobal("crypto", { getRandomValues: crypto.getRandomValues.bind(crypto) });
+    const machine = vm();
+    machine.harness.files.mkdir("/workspace/_oxidevm", 0o755);
+    machine.harness.files.mkdir("/workspace/_oxidevm/pgdata-migrating", 0o700);
+    const hooks = await definition.adapter(machine.host());
+    expect(await ask(hooks, "SELECT 1 AS one")).toMatchObject({ ok: true, result: { rows: [{ one: 1 }] } });
+    await hooks.close?.();
+    expect(JSON.parse(machine.read("/workspace/pgdata/.oxidevm-storage.json"))).toMatchObject({ version: 1, source: "new" });
+  });
+});
+
 describe("starting nothing but itself", () => {
   it("never reaches for process.spawn, wait or signal: a whole life of the service only asks for the process id", async () => {
     const machine = vm();
@@ -144,10 +180,16 @@ describe("a start that cannot succeed", () => {
     expect(machine.exists("/workspace/_oxidevm")).toBe(false);
   });
 
-  it("leaves no data directory when the legacy database cannot be read", async () => {
-    const machine = vm({ legacyIndexedDb: "old-database" });
-    await expect(definition.adapter(machine.host())).rejects.toThrow(/indexedDB/u);
+  it("leaves no data directory when the import archive is missing", async () => {
+    const machine = vm({ importArchive: "/workspace/pglite-import.tar" });
+    await expect(definition.adapter(machine.host())).rejects.toThrow("The import archive /workspace/pglite-import.tar does not exist");
     expect(machine.exists("/workspace/pgdata")).toBe(false);
+  });
+
+  it("refuses an import archive inside the data directory before it starts anything", async () => {
+    const machine = vm({ importArchive: "/workspace/pgdata/import.tar" });
+    await expect(Promise.resolve().then(() => definition.adapter(machine.host()))).rejects.toThrow(/importArchive/u);
+    expect(machine.processTouched).toEqual([]);
   });
 
   it("refuses a data directory that was not made by this module", async () => {
