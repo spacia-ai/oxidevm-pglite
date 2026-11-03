@@ -79,7 +79,7 @@ const MODULE_FRAME = process.env["OXIDEVM_MODULE_FRAME_DIR"] ?? join(root, "node
 /** The response headers `frame.json` prescribes for the module frame's files; without them the frame's CSP is missing. */
 async function moduleFrameHeaders(): Promise<readonly (readonly [string, string])[]> {
   const text = await readFile(join(MODULE_FRAME, "frame.json"), "utf8").catch(() => undefined);
-  if (text === undefined) throw new MissingPrerequisite(`${MODULE_FRAME}/frame.json is missing: the installed @oxidevm/sdk has no module frame (SDK 0.0.10 and later have one).`);
+  if (text === undefined) throw new MissingPrerequisite(`${MODULE_FRAME}/frame.json is missing: the installed @oxidevm/sdk has no module frame (SDK 0.0.12 and later have one).`);
   const parsed: unknown = JSON.parse(text);
   const headers: unknown = typeof parsed === "object" && parsed !== null ? Reflect.get(parsed, "headers") : undefined;
   assert(typeof headers === "object" && headers !== null && !Array.isArray(headers), "frame.json has no headers object");

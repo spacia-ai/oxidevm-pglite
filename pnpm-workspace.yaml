@@ -2,5 +2,5 @@ allowBuilds:
   esbuild: true
 minimumReleaseAgeExclude:
   - '@electric-sql/pglite@0.5.14'
-  - '@oxidevm/cli@0.0.8'
-  - '@oxidevm/sdk@0.0.8'
+  - '@oxidevm/cli@0.0.12'
+  - '@oxidevm/sdk@0.0.12'
