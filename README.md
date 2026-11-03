@@ -251,6 +251,8 @@ the scenarios). It needs:
 - `OXIDEVM_TEST_USERSPACE_IMAGE` (an image reference JSON) and `OXIDEVM_TEST_USERSPACE_IMAGE_DIR` (its bundle directory): an
   image with `/usr/bin/python3` 3.12 (the module does not need it; the test clients do);
 - the engine release the installed SDK pins, in `~/.cache/oxidevm/engine/<id>` (or `OXIDEVM_ENGINE_DIR`);
+- the installed SDK's module frame, served with its `frame.json` headers (`OXIDEVM_MODULE_FRAME_DIR` serves another build
+  of it, such as an SDK checkout with a fix);
 - `.cache/postgres-clients.tar.gz`: native `psql` 17 and psycopg 3.2.13 for musl, made by `node scripts/stage-postgres-clients.ts`
   (needs Docker) and checked against `test/postgres-clients.lock.json`. It is a test tool only: it contains libraries under
   other licenses (readline is GPL) and is never committed or released.
