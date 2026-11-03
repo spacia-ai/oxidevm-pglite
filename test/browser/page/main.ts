@@ -2,12 +2,14 @@ import { core } from "./core";
 import { crashRecover, crashSeed } from "./crash";
 import { migration } from "./migration";
 import type { ScenarioResult, SuiteConfig } from "./protocol";
+import { refusal } from "./refusal";
 
 const suites: Readonly<Record<string, (config: SuiteConfig) => Promise<readonly ScenarioResult[]>>> = {
   core,
   "crash-seed": crashSeed,
   "crash-recover": crashRecover,
   migration,
+  refusal,
 };
 
 /** The Node-side harness drives this page: it calls `runModuleSuite` with the served locations. */

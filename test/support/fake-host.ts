@@ -74,14 +74,19 @@ export class FakeVm {
       },
     });
     const unsupported = (name: string): (() => never) => () => { throw new Error(`${name} is not part of the fake VM`); };
+    // Built apart from the literal below so that it also type-checks against SDKs whose artifacts have no `blob` or `bytesSync`.
+    type ArtifactName = Parameters<Host["artifacts"]["bytes"]>[0];
+    const artifacts = {
+      compile: async (name: ArtifactName) => WebAssembly.compile(fs.readFileSync(path.join(PGLITE_DIST, name))),
+      bytes: (name: ArtifactName) => Promise.resolve(Uint8Array.from(this.#artifact(name))),
+      bytesSync: (name: ArtifactName) => Uint8Array.from(this.#artifact(name)),
+      blob: (name: ArtifactName) => new Blob([Uint8Array.from(this.#artifact(name))]),
+      url: (name: ArtifactName) => `https://modules.invalid/${name}`,
+    };
     return {
       signal: new AbortController().signal,
       options: { dataDir: this.options.dataDir ?? "/workspace/pgdata", durability: this.options.durability ?? "strict", importArchive: this.options.importArchive ?? "" },
-      artifacts: {
-        compile: async name => WebAssembly.compile(fs.readFileSync(path.join(PGLITE_DIST, name))),
-        bytes: name => Promise.resolve(Uint8Array.from(this.#artifact(name))),
-        url: name => `https://modules.invalid/${name}`,
-      },
+      artifacts,
       kit,
       stdio: { stdin: descriptor(0), stdout: descriptor(1), stderr: descriptor(2) },
       log: line => { this.logs.push(line); },

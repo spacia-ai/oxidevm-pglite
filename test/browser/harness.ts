@@ -2,9 +2,10 @@
 //   1. builds this repository's release with `oxidevm wasm build`;
 //   2. installs it into a fresh project with the real CLI (`oxidevm wasm add file:… --yes`), which stages the files and
 //      generates the typed handle, and type-checks the page against that handle with the strict flags;
-//   3. builds the page with Vite, serves it with the pinned engine and a signed Userspace image, and drives Chromium.
+//   3. builds the page with Vite, serves it with the pinned engine and a signed Userspace image, and drives a browser
+//      (Chromium by default, `--browser=firefox` or `--browser=webkit`).
 //
-//   pnpm test:browser [core] [crash] [migration]
+//   pnpm test:browser [core] [crash] [migration] [refusal] [--browser=chromium|firefox|webkit]
 //   OXIDEVM_TEST_USERSPACE_IMAGE=<image reference JSON> OXIDEVM_TEST_USERSPACE_IMAGE_DIR=<bundle dist> pnpm test:browser
 //   OXIDEVM_MODULE_FRAME_DIR=<module-frame directory> serves another build of the SDK module frame than the installed one
 import assert from "node:assert/strict";
@@ -17,7 +18,7 @@ import type { Server, ServerResponse } from "node:http";
 import { homedir, tmpdir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { chromium } from "playwright";
+import { chromium, firefox, webkit } from "playwright";
 import type { Browser, BrowserContext, Page } from "playwright";
 import { build } from "vite";
 import { decodeProjectConfig, getSDKRelease, pinnedEngineCompliance } from "@oxidevm/sdk/image-builder";
@@ -88,7 +89,23 @@ async function moduleFrameHeaders(): Promise<readonly (readonly [string, string]
   });
 }
 
-export interface HarnessOptions { readonly keep: boolean; readonly verbose: boolean; readonly only: string }
+export const BROWSERS = ["chromium", "firefox", "webkit"] as const;
+export type BrowserName = (typeof BROWSERS)[number];
+
+export function isBrowserName(value: string): value is BrowserName {
+  return BROWSERS.some(name => name === value);
+}
+
+/** Chromium needs the tail-call flag on older builds; Firefox and WebKit have Wasm tail calls on by default. */
+function launch(name: BrowserName): Promise<Browser> {
+  switch (name) {
+    case "chromium": return chromium.launch({ headless: true, args: ["--js-flags=--experimental-wasm-return-call"] });
+    case "firefox": return firefox.launch({ headless: true });
+    case "webkit": return webkit.launch({ headless: true });
+  }
+}
+
+export interface HarnessOptions { readonly keep: boolean; readonly verbose: boolean; readonly only: string; readonly browser: BrowserName }
 
 export class Harness {
   readonly #browser: Browser;
@@ -137,7 +154,7 @@ export class Harness {
       const address = server.address();
       assert(address !== null && typeof address !== "string");
       const origin = `http://127.0.0.1:${String(address.port)}`;
-      const browser = await chromium.launch({ headless: true, args: ["--js-flags=--experimental-wasm-return-call"] });
+      const browser = await launch(options.browser);
       return new Harness(browser, server, output, {
         origin,
         image: { manifestUrl: new URL(reference.manifestUrl, origin).href, manifestSHA256: reference.manifestSHA256, trust: reference.trust },
@@ -221,6 +238,10 @@ export class Harness {
     return page;
   }
 
+  get browserName(): BrowserName {
+    return this.#options.browser;
+  }
+
   /** Runs one suite in a page and returns what its scenarios reported. */
   async runSuite(page: Page, suite: string): Promise<readonly ScenarioResult[]> {
     const work = page.evaluate(async (input: SuiteConfig) => {
@@ -261,7 +282,7 @@ export function report(results: readonly ScenarioResult[]): number {
   return failed;
 }
 
-export async function writeResults(results: readonly ScenarioResult[]): Promise<void> {
+export async function writeResults(browser: BrowserName, results: readonly ScenarioResult[]): Promise<void> {
   await mkdir(join(root, ".cache/test-results"), { recursive: true });
-  await writeFile(join(root, ".cache/test-results/browser.json"), `${JSON.stringify({ results }, null, 2)}\n`);
+  await writeFile(join(root, `.cache/test-results/browser-${browser}.json`), `${JSON.stringify({ browser, results }, null, 2)}\n`);
 }

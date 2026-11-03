@@ -233,7 +233,7 @@ pnpm test                        # unit tests: real PGlite on a directory of thi
 pnpm run build                   # writes dist/: module.json, adapter.mjs, the artifacts and SHA256SUMS
 pnpm run mutate                  # mutation test of the ported logic (needs a clean tree)
 pnpm run test:conformance        # oxidevm wasm test: the runner's contract, in Chromium
-pnpm test:browser                # real engine + Chromium, see below
+pnpm test:browser                # real engine + Chromium (--browser=firefox|webkit), see below
 ```
 
 `@oxidevm/sdk` and `@oxidevm/cli` are exact devDependencies, installed from npm; 0.2.0 is built and tested against the
@@ -242,11 +242,11 @@ the build script of `esbuild`, and `pnpm-lock.yaml` is committed.
 
 ### Real-engine tests
 
-`pnpm test:browser [core] [crash] [migration]` builds this repository's release, installs it into a fresh project with the
+`pnpm test:browser [core] [crash] [migration] [refusal] [--browser=chromium|firefox|webkit]` builds this repository's release, installs it into a fresh project with the
 real CLI (`oxidevm wasm add file:…`), type-checks the page against the generated handle and bundles it with Vite, serves it
 with the engine release the installed SDK pins, the SDK's module frame (with `frame.json`'s headers) and a signed Userspace
-image, and drives Chromium (`--only=<text>` narrows
-the scenarios). It needs:
+image, and drives the browser, Chromium by default (`--only=<text>` narrows
+the scenarios). Without suite names, Chromium and Firefox run core, crash and migration, and WebKit runs refusal. It needs:
 
 - `OXIDEVM_TEST_USERSPACE_IMAGE` (an image reference JSON) and `OXIDEVM_TEST_USERSPACE_IMAGE_DIR` (its bundle directory): an
   image with `/usr/bin/python3` 3.12 (the module does not need it; the test clients do);
@@ -271,9 +271,14 @@ The suites: **core** (start and stop, the JSON reply shape, the Python client, l
 and a vanished client, session isolation, clients that hang up in the middle of a large result while another keeps
 getting answers (one that closes cleanly right after asking for 30 MB, one that resets the connection after 64 KiB, and
 the real `psql` killed while it receives a 200 MB `COPY`), JSON clients that hang up before reading their reply, the
-four-client cap, a second start failing busy, a killed service and its stale socket, restart, relaxed durability),
-**crash** (kill the renderer with a transaction open; the committed row survives, the open transaction rolls back) and
-**migration** (the page exports a legacy IndexedDB database into the workspace and the module imports it with `importArchive`).
+four-client cap, a second start failing busy, a service killed with SIGKILL whose stale Unix socket the next start replaces,
+answering on both the socket and the port, restart, relaxed durability),
+**crash** (end the page with a transaction open: Chromium kills the renderer, Firefox and WebKit, which have no such call in
+Playwright, close the page without `beforeunload`; the committed row survives, the open transaction rolls back),
+**migration** (the page exports a legacy IndexedDB database into the workspace and the module imports it with `importArchive`)
+and **refusal** (for WebKit, which cannot run modules: no PGlite code runs and the refusal is the SDK's typed
+`FEATURE_NOT_AVAILABLE`, either at `createVM`, as in Playwright's WebKit on Linux, which has no OPFS, or at the start with
+`wasm-module-isolation-unavailable` naming the missing capability, such as `blob-workers`, after which the VM stays usable).
 
 ## Release
 
@@ -298,7 +303,8 @@ Consumers install with
 
 `oxidevm wasm build` prints warnings about the PGlite library it bundles. They are expected: `import.meta` and `window`
 appear in PGlite's Emscripten loader on code paths a worker with explicitly supplied artifacts does not take (this module
-passes the compiled WebAssembly and the file bundle itself); `eval` appears in two places of that loader, so a page content
+passes the compiled WebAssembly and the file bundle itself), and so does `XMLHttpRequest`, which the module frame does not
+have (the loader would use it only to download those files; this module has no network reach, see [Network](#network)); `eval` appears in two places of that loader, so a page content
 security policy needs `'unsafe-eval'` unless those paths are never reached (not qualified here); `node:module` is replaced
 by an empty module; and `util@unknown` is the Node `util` import that PGlite's `browser` field disables, which the build
 lists because the package manager hoisted an unrelated `util` next to it. Nothing of it is in the bundle.
