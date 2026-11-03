@@ -2,12 +2,14 @@ import type { KitErrno, SyncFiles } from "./ports.ts";
 import { MAX_ARCHIVE_BYTES } from "./storage.ts";
 import type { ImportedArchive, ImportSource } from "./storage.ts";
 
-const ENOENT = 2, EFBIG = 27, S_IFMT = 0o170000, S_IFREG = 0o100000, S_IFDIR = 0o040000;
+const ENOENT = 2, S_IFMT = 0o170000, S_IFREG = 0o100000, S_IFDIR = 0o040000, O_RDONLY = 0;
+/** One read of the host returns at most 16 MiB (and `readFile` refuses a larger limit), so a piece is read in steps. */
+const READ_BYTES = 4 * 1024 ** 2;
 /** At most this many pieces: 256 MiB in pieces of the 16 MiB a page can write with one `vm.workspace.write`. */
 export const MAX_ARCHIVE_PIECES = 64;
 
 export interface ArchiveHost {
-  readonly files: Pick<SyncFiles, "lstat" | "readFile" | "readdir">;
+  readonly files: Pick<SyncFiles, "lstat" | "readdir" | "open" | "read" | "close">;
   readonly errno: KitErrno;
 }
 
@@ -32,16 +34,25 @@ function modeOf(host: ArchiveHost, path: string): number {
   }
 }
 
-function tooLarge(path: string, cause?: unknown): Error {
-  return new Error(`The import archive ${path} exceeds the 256 MiB limit`, cause === undefined ? undefined : { cause });
+function tooLarge(path: string): Error {
+  return new Error(`The import archive ${path} exceeds the 256 MiB limit`);
 }
 
-function readPiece(host: ArchiveHost, archive: string, path: string, remaining: number): Uint8Array {
+/** Reads one file whole, in steps, failing as soon as it holds more than `remaining` bytes. */
+function readPiece(host: ArchiveHost, archive: string, path: string, remaining: number): Uint8Array<ArrayBuffer>[] {
+  const chunks: Uint8Array<ArrayBuffer>[] = [];
+  let read = 0;
+  const fd = host.files.open(path, O_RDONLY);
   try {
-    return host.files.readFile(path, remaining);
-  } catch (error: unknown) {
-    if (host.errno.of(error) === EFBIG) throw tooLarge(archive, error);
-    throw error;
+    for (;;) {
+      const chunk = host.files.read(fd, Math.min(READ_BYTES, remaining - read + 1));
+      if (chunk.length === 0) return chunks;
+      read += chunk.length;
+      if (read > remaining) throw tooLarge(archive);
+      chunks.push(owned(chunk));
+    }
+  } finally {
+    host.files.close(fd);
   }
 }
 
@@ -67,11 +78,11 @@ function readArchive(host: ArchiveHost, path: string): ImportedArchive {
   const parts: Uint8Array<ArrayBuffer>[] = [];
   let total = 0;
   for (const file of files) {
-    const part = readPiece(host, path, file, MAX_ARCHIVE_BYTES - total);
-    total += part.length;
-    parts.push(owned(part));
+    for (const part of readPiece(host, path, file, MAX_ARCHIVE_BYTES - total)) {
+      total += part.length;
+      parts.push(part);
+    }
   }
-  if (total > MAX_ARCHIVE_BYTES) throw tooLarge(path);
   if (total === 0) throw new Error(`The import archive ${path} is empty`);
   // PGlite decompresses an archive whose type says gzip; dumpDataDir("gzip") and "auto" write gzip.
   const gzip = parts[0]?.[0] === 0x1f && parts[0][1] === 0x8b;
