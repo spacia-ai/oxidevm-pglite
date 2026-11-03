@@ -10,17 +10,18 @@ programs reach it:
 
 It is the reusable form of the database service in the OxideVM sample (`ed4984d`): same behavior, as a module you install
 with one command instead of code you copy. It asks the host for two things only: file operations and its own process id.
-It starts no program of the image.
+It starts no program of the image, and it uses no browser storage: no IndexedDB, no Web Locks, no OPFS of its own.
 
 ## Use it
 
 ```sh
-oxidevm wasm add github:spacia-ai/oxidevm-pglite@v0.1.0
+oxidevm wasm add github:spacia-ai/oxidevm-pglite@v0.2.0
 ```
 
-The command shows what the module declares and asks before it installs anything. It needs a self-hosted runtime on a
-cross-origin isolated page (see the [module documentation](https://oxidevm.dev/docs)) and Userspace API 144 or later
-(`@oxidevm/sdk` 0.0.7 and up: native `utimes` and `noSignal` socket writes).
+The command shows what the module declares and asks before it installs anything. It needs a cross-origin isolated page
+(see the [module documentation](https://oxidevm.dev/docs)) and `@oxidevm/sdk` 0.0.10 or later, whose module frame (engine
+ADR 0028) runs it. A self-hosted runtime serves that frame at `<runtime.baseUrl>module-frame/` with the headers of the
+SDK's `frame.json`. Version 0.1.0 does not start on 0.0.10; see [Changes in 0.2.0](#changes-in-020).
 
 ```ts
 import { spawnModule, stopModule } from "@oxidevm/sdk/wasm";
@@ -33,8 +34,9 @@ console.log(database.info); // { version: "18.6", backend: "pglite-wasm", dataDi
 await stopModule(database); // drains, flushes the database, removes the socket, exits 0
 ```
 
-`workspaceId` is required: the service is exclusive per workspace, so a second start in the same workspace (another
-tab, another call) fails with `wasm-module-busy` instead of corrupting the database.
+`workspaceId` is required: the service is exclusive per workspace (`process.exclusive: "workspace"`), so a second start
+in the same workspace (another tab, another call) fails with `wasm-module-busy` instead of corrupting the database. The
+VM holds that lease for the module, from before the process starts until it ends; the module itself takes no lock.
 
 From Python in the VM:
 
@@ -57,6 +59,13 @@ From a shell or any driver (user `postgres`, database `postgres`, no password, n
 ```sh
 psql "postgresql://postgres@127.0.0.1:5432/postgres?sslmode=disable"
 ```
+
+## Network
+
+This module declares no network reach: it opens no connections of its own and its `fetch` fails with "network not
+declared". A service still serves programs in the VM through `expose`: the Unix socket `/workspace/_oxidevm/pglite.sock`
+and `127.0.0.1:5432`, which the runner binds and listens on for it. Nothing connects to the internet, so it works the same
+offline, and no host is disclosed.
 
 ## One backend
 
@@ -111,7 +120,7 @@ therefore ends its own session and nothing else.
 | --- | --- | --- |
 | `dataDir` | `/workspace/pgdata` | where the database lives: an absolute path inside `/workspace`, outside `/workspace/_oxidevm` |
 | `durability` | `strict` | `strict`: a statement is answered after its changes are flushed (file contents first, then their directories). `relaxed`: it is answered first and flushed right after; a failed flush is logged and reported to the next change |
-| `legacyIndexedDb` | empty | the name of an IndexedDB database from an earlier PGlite application (`idb://<name>`) to migrate once; empty means none |
+| `importArchive` | empty | the guest path of a PGlite data-directory archive (`dumpDataDir("none")`) to load when the data directory is created; an absolute path inside `/workspace`, outside `dataDir`; empty means a new, empty database. See [Migrate from IndexedDB](#migrate-from-indexeddb) |
 
 ## Safe by construction
 
@@ -120,10 +129,11 @@ therefore ends its own session and nothing else.
   parent directories are flushed after the rename. A crash leaves either no database or a whole one; an earlier unfinished
   attempt is kept aside as `pgdata-migrating-failed-<uuid>`. A `dataDir` that exists without the marker is refused, not
   adopted.
-- **Migration.** With `legacyIndexedDb`, the legacy database is exported, copied into the new directory, and the copy must
-  reproduce its fingerprint (tables, columns, constraints, sequences, views, a digest of every row). The archive is kept as
-  `/workspace/_oxidevm/pglite-indexeddb-<uuid>.tar` and the IndexedDB database is never changed or removed. The archive is
-  limited to 256 MiB.
+- **Import.** With `importArchive`, a new database is loaded from that archive in the staging directory, and only a whole,
+  marked copy is renamed into place. The marker records `source: "archive"`, the archive's path and the fingerprint of
+  the copy (tables, columns, constraints, sequences, views, a digest of every row). The archive is never changed or
+  removed and is limited to 256 MiB. A missing, oversized or unreadable archive fails the start and leaves no data
+  directory, instead of starting an empty database. Once the data directory exists the option is ignored.
 - **Durability.** Every statement's changes are made durable in the VM file system in a fixed order (changed files, then the
   directories that hold them, deepest first); a failed flush fails the statement. File times that PostgreSQL's file system
   layer restores (for example when a data directory is loaded) reach the host's `utimes` as dates to the millisecond.
@@ -144,10 +154,70 @@ it, atomically and only when it differs. Deliberate differences:
   not recognized as `COPY`.
 - The migration fingerprint no longer fails on a database with a `bigint` sequence limit (`bigserial`, identity columns,
   `CREATE SEQUENCE`): the sample's `JSON.stringify` threw on `bigint`.
-- A new database no longer needs `indexedDB.databases()` unless there is something to migrate.
 - A relaxed flush that fails is reported instead of becoming an unhandled rejection.
 - A client that goes away before sending a whole JSON request gets no reply (the sample tried to write one).
-- `legacyIndexedDb` defaults to `""` (no migration) because the SDK treats an option without a default as required.
+- The one-time migration from IndexedDB happens in the page, not in the module (see below): module code runs where there
+  is no IndexedDB.
+
+## Migrate from IndexedDB
+
+The module runs in the VM's module frame, an opaque origin without IndexedDB, so it cannot open a database that an earlier
+PGlite application kept in IndexedDB (`idb://<name>`). The page can: export the database there once, write the archive into
+the workspace, and start the module with `importArchive`. PGlite and the SDK APIs used here are public; nothing else is
+needed.
+
+```ts
+import { PGlite } from "@electric-sql/pglite";
+import type { UserspaceVM } from "@oxidevm/sdk";
+import { spawnModule } from "@oxidevm/sdk/wasm";
+import { pglite } from "./oxidevm.modules.generated";
+
+export async function startWithLegacyData(vm: UserspaceVM, legacyName: string) {
+  const known = (await indexedDB.databases()).some(database => database.name === `/pglite/${legacyName}`);
+  const migrated = await vm.workspace.readText("pgdata/.oxidevm-storage.json").then(() => true, () => false);
+  if (known && !migrated) {
+    const legacy = await PGlite.create({ dataDir: `idb://${legacyName}` });
+    try {
+      const archive = await legacy.dumpDataDir("none");
+      await vm.workspace.writeFile("pglite-import.tar", new Uint8Array(await archive.arrayBuffer()));
+    } finally {
+      await legacy.close();
+    }
+  }
+  return spawnModule(vm, pglite, { workspaceId: "project-1", options: known && !migrated ? { importArchive: "/workspace/pglite-import.tar" } : {} });
+}
+```
+
+The IndexedDB database is only read, never changed or removed; delete it yourself once you have checked the workspace copy.
+The `migration` browser suite runs exactly this sequence against a real engine.
+
+## Changes in 0.2.0
+
+0.2.0 runs on `@oxidevm/sdk` 0.0.10, whose module frame (engine ADR 0028) has no IndexedDB, no Web Locks and, in Chromium,
+no `crypto.subtle` or `crypto.randomUUID`. 0.1.0 declared `requires.browser: ["indexeddb", "web-locks"]` for its built-in
+migration, so 0.0.10 refuses every start of it with `wasm-module-prerequisite`.
+
+- **No browser requirements.** `requires.browser` is gone; `requires.host` is still `files.sync` and `process.info`. The
+  database was already ordinary files of the VM; single-writer safety is the VM's workspace lease (`exclusive:
+  "workspace"`), which 0.0.10 takes in the Userspace worker, outside module code.
+- **`legacyIndexedDb` is replaced by `importArchive`.** The module no longer opens IndexedDB. Applications that migrated a
+  legacy database export it in the page and pass the archive (see [Migrate from IndexedDB](#migrate-from-indexeddb)).
+  0.1.0 verified the copy against a fingerprint of the IndexedDB original; 0.2.0 cannot read the original, so it records the
+  fingerprint of the copy, and the check against the original is the page's (it holds both).
+- **Fingerprints and temporary names without secure-context APIs.** The fingerprint's SHA-256 is computed by PostgreSQL
+  (`sha256()`), giving the same digest as before; temporary and set-aside names use `crypto.getRandomValues`.
+- **Network: none**, stated in the new [Network](#network) section (engine ADR 0029).
+
+Migration notes:
+
+- **A data directory 0.1.0 made opens unchanged**, including one it migrated from IndexedDB (marker `source:
+  "indexeddb"`); its backup archive under `/workspace/_oxidevm/` is kept. Nothing to do.
+- **A legacy IndexedDB database 0.1.0 has not migrated yet** (the application never started 0.1.0 with `legacyIndexedDb`
+  in that browser): either start 0.1.0 once on SDK 0.0.9 with `legacyIndexedDb` before upgrading, or export it in the page
+  as shown above. 0.1.0 itself never wrote to IndexedDB.
+- **Remove `legacyIndexedDb` from `spawnModule` options**: the regenerated handle no longer has it. Use `importArchive` instead.
+- **Downgrade:** 0.1.0 refuses a data directory 0.2.0 imported (marker `source: "archive"` is unknown to it); a directory
+  0.2.0 created empty opens in 0.1.0.
 
 ## Develop it
 
@@ -162,14 +232,16 @@ pnpm run test:conformance        # oxidevm wasm test: the runner's contract, in 
 pnpm test:browser                # real engine + Chromium, see below
 ```
 
-`@oxidevm/sdk` and `@oxidevm/cli` are exact devDependencies, installed from npm. The committed `pnpm-workspace.yaml` allows
+`@oxidevm/sdk` and `@oxidevm/cli` are exact devDependencies, installed from npm; 0.2.0 is built and tested against the
+0.0.10 line. The committed `pnpm-workspace.yaml` allows
 the build script of `esbuild`, and `pnpm-lock.yaml` is committed.
 
 ### Real-engine tests
 
 `pnpm test:browser [core] [crash] [migration]` builds this repository's release, installs it into a fresh project with the
 real CLI (`oxidevm wasm add file:…`), type-checks the page against the generated handle and bundles it with Vite, serves it
-with the engine release the installed SDK pins and a signed Userspace image, and drives Chromium (`--only=<text>` narrows
+with the engine release the installed SDK pins, the SDK's module frame (with `frame.json`'s headers) and a signed Userspace
+image, and drives Chromium (`--only=<text>` narrows
 the scenarios). It needs:
 
 - `OXIDEVM_TEST_USERSPACE_IMAGE` (an image reference JSON) and `OXIDEVM_TEST_USERSPACE_IMAGE_DIR` (its bundle directory): an
@@ -195,7 +267,7 @@ getting answers (one that closes cleanly right after asking for 30 MB, one that 
 the real `psql` killed while it receives a 200 MB `COPY`), JSON clients that hang up before reading their reply, the
 four-client cap, a second start failing busy, a killed service and its stale socket, restart, relaxed durability),
 **crash** (kill the renderer with a transaction open; the committed row survives, the open transaction rolls back) and
-**migration** (a legacy IndexedDB database moves into the workspace).
+**migration** (the page exports a legacy IndexedDB database into the workspace and the module imports it with `importArchive`).
 
 ## Release
 
@@ -203,18 +275,18 @@ Publishing changes what others can install, so it goes draft, verify, publish: t
 against its own `SHA256SUMS` before it becomes visible. The tag must name the version in `module.ts`.
 
 ```sh
-git tag v0.1.0 && git push origin v0.1.0
+git tag v0.2.0 && git push origin v0.2.0
 pnpm run build
-gh release create v0.1.0 dist/* --draft --verify-tag --title v0.1.0
-gh release download v0.1.0 --dir verify && (cd verify && sha256sum --check SHA256SUMS)
-gh release edit v0.1.0 --draft=false
+gh release create v0.2.0 dist/* --draft --verify-tag --title v0.2.0
+gh release download v0.2.0 --dir verify && (cd verify && sha256sum --check SHA256SUMS)
+gh release edit v0.2.0 --draft=false
 ```
 
 `pnpm run release` prints these steps and runs none of them. The `release` workflow does the same in GitHub Actions, in two
 jobs: a read-only one fetches the mirrored WebAssembly and builds, and a second one, which installs nothing, drafts, verifies
 and publishes. The `ci` workflow runs on pushes to `main` and on pull requests, and `release` runs when a `v*` tag is pushed.
 Consumers install with
-`oxidevm wasm add github:spacia-ai/oxidevm-pglite@v0.1.0`.
+`oxidevm wasm add github:spacia-ai/oxidevm-pglite@v0.2.0`.
 
 ### Build warnings
 

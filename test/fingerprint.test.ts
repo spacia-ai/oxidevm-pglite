@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { fingerprint } from "../src/fingerprint.ts";
@@ -21,7 +22,22 @@ describe("fingerprint", () => {
     expect(second).toBe(first);
   });
 
-  it("does not depend on the order rows were inserted", async () => {
+  it("is the SHA-256 of the UTF-8 text, the digest 0.1.0 took with WebCrypto, now computed by PostgreSQL", async () => {
+    await fresh("CREATE TABLE t(label text); INSERT INTO t VALUES ('ünïcode ✓'), (E'line\\nbreak');");
+    const texts: string[] = [];
+    const recording = {
+      query: <T>(sql: string, params?: unknown[]) => {
+        if (sql.includes("sha256") && typeof params?.[0] === "string") texts.push(params[0]);
+        return db.query<T>(sql, params);
+      },
+    };
+    const digest = await fingerprint(recording);
+    expect(texts).toHaveLength(1);
+    expect(digest).toBe(createHash("sha256").update(texts[0] ?? "", "utf8").digest("hex"));
+    expect(digest).toBe(await fingerprint(db));
+  });
+
+    it("does not depend on the order rows were inserted", async () => {
     const forward = await fresh("CREATE TABLE t(n integer); INSERT INTO t VALUES (1), (2), (3);");
     const backward = await fresh("CREATE TABLE t(n integer); INSERT INTO t VALUES (3), (2), (1);");
     expect(backward).toBe(forward);

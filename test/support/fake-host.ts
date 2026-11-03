@@ -19,7 +19,7 @@ const FORBIDDEN = new Set(["spawn", "wait", "signal", "chdir"]);
 export interface FakeVmOptions {
   readonly dataDir?: string;
   readonly durability?: "relaxed" | "strict";
-  readonly legacyIndexedDb?: string;
+  readonly importArchive?: string;
 }
 
 /**
@@ -76,7 +76,7 @@ export class FakeVm {
     const unsupported = (name: string): (() => never) => () => { throw new Error(`${name} is not part of the fake VM`); };
     return {
       signal: new AbortController().signal,
-      options: { dataDir: this.options.dataDir ?? "/workspace/pgdata", durability: this.options.durability ?? "strict", legacyIndexedDb: this.options.legacyIndexedDb ?? "" },
+      options: { dataDir: this.options.dataDir ?? "/workspace/pgdata", durability: this.options.durability ?? "strict", importArchive: this.options.importArchive ?? "" },
       artifacts: {
         compile: async name => WebAssembly.compile(fs.readFileSync(path.join(PGLITE_DIST, name))),
         bytes: name => Promise.resolve(Uint8Array.from(this.#artifact(name))),

@@ -67,6 +67,23 @@ interface Layout {
   readonly complianceDir: string | undefined;
   readonly imageDir: string;
   readonly imagePrefix: string;
+  /** The SDK's module frame (engine ADR 0028) and the headers its `frame.json` says the frame must be served with. */
+  readonly moduleFrame: { readonly dir: string; readonly headers: readonly (readonly [string, string])[] };
+}
+
+const MODULE_FRAME = join(root, "node_modules/@oxidevm/sdk/assets/module-frame");
+
+/** The response headers `frame.json` prescribes for the module frame's files; without them the frame's CSP is missing. */
+async function moduleFrameHeaders(): Promise<readonly (readonly [string, string])[]> {
+  const text = await readFile(join(MODULE_FRAME, "frame.json"), "utf8").catch(() => undefined);
+  if (text === undefined) throw new MissingPrerequisite(`${MODULE_FRAME}/frame.json is missing: the installed @oxidevm/sdk has no module frame (SDK 0.0.10 and later have one).`);
+  const parsed: unknown = JSON.parse(text);
+  const headers: unknown = typeof parsed === "object" && parsed !== null ? Reflect.get(parsed, "headers") : undefined;
+  assert(typeof headers === "object" && headers !== null && !Array.isArray(headers), "frame.json has no headers object");
+  return Object.entries(headers).map(([name, value]: [string, unknown]) => {
+    assert(typeof value === "string", `frame.json header ${name} is not a string`);
+    return [name, value] as const;
+  });
 }
 
 export interface HarnessOptions { readonly keep: boolean; readonly verbose: boolean; readonly only: string }
@@ -111,7 +128,8 @@ export class Harness {
       const referenceJSON: unknown = JSON.parse(await readFile(imageFile, "utf8"));
       const reference = decodeProjectConfig({ mode: "userspace", image: referenceJSON }).image;
       assert(reference !== undefined, "The image reference JSON is not a signed image reference");
-      const layout: Layout = { project, dist, engineDir, complianceDir, imageDir, imagePrefix: `${dirname(new URL(reference.manifestUrl, "http://x").pathname)}/` };
+      const moduleFrame = { dir: MODULE_FRAME, headers: await moduleFrameHeaders() };
+      const layout: Layout = { project, dist, engineDir, complianceDir, imageDir, imagePrefix: `${dirname(new URL(reference.manifestUrl, "http://x").pathname)}/`, moduleFrame };
       const server = createServer((request, response) => { Harness.#serve(layout, request.url ?? "/", response); });
       await new Promise<void>(ready => { server.listen(0, "127.0.0.1", ready); });
       const address = server.address();
@@ -169,14 +187,18 @@ export class Harness {
     const path = new URL(url, "http://localhost").pathname;
     for (const [name, value] of [["Cross-Origin-Opener-Policy", "same-origin"], ["Cross-Origin-Embedder-Policy", "require-corp"], ["Cross-Origin-Resource-Policy", "same-origin"]] as const) response.setHeader(name, value);
     const dist = path.slice("/page/".length);
-    const file = path.startsWith("/engine/compliance/") && layout.complianceDir !== undefined ? join(layout.complianceDir, path.slice("/engine/compliance/".length + 65))
+    // The module frame lives beside the engine assets (`<runtime.baseUrl>module-frame/`), served with frame.json's headers.
+    if (path.startsWith("/engine/module-frame/")) for (const [name, value] of layout.moduleFrame.headers) response.setHeader(name, value);
+    const frameFile = path.slice("/engine/module-frame/".length) || "index.html";
+    const file = path.startsWith("/engine/module-frame/") ? (["index.html", "broker.js", "runner.js"].includes(frameFile) ? join(layout.moduleFrame.dir, frameFile) : undefined)
+      : path.startsWith("/engine/compliance/") && layout.complianceDir !== undefined ? join(layout.complianceDir, path.slice("/engine/compliance/".length + 65))
       : path.startsWith("/engine/") ? join(layout.engineDir, path.slice("/engine/".length))
       : path.startsWith(layout.imagePrefix) ? join(layout.imageDir, path.slice(layout.imagePrefix.length))
       : path === "/clients/postgres-clients.tar.gz" ? CLIENTS_ARCHIVE
       : path.startsWith("/legacy/") ? join(root, "node_modules/@electric-sql/pglite/dist", path.slice("/legacy/".length))
       : path.startsWith("/page/") ? join(layout.dist, dist === "" ? "index.html" : dist)
       : undefined;
-    response.setHeader("Content-Type", CONTENT_TYPES[extname(path)] ?? "application/octet-stream");
+    response.setHeader("Content-Type", CONTENT_TYPES[extname(path === "/engine/module-frame/" ? "index.html" : path)] ?? "application/octet-stream");
     if (file === undefined) { response.writeHead(404); response.end(); return; }
     const stream = createReadStream(file);
     stream.on("error", () => { process.stderr.write(`404: ${path}\n`); response.writeHead(404); response.end(); });

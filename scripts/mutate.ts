@@ -78,15 +78,19 @@ export const MUTATIONS: readonly Mutation[] = [
   { id: "fs-utimes-follows-links", file: "src/vm-fs.ts", find: "{ followLinks: true }", replace: "{ followLinks: false }", tests: FS },
   { id: "fs-utimes-validation", file: "src/vm-fs.ts", find: "if (Number.isNaN(accessed.getTime()) || Number.isNaN(modified.getTime())) throw", replace: "if (Number.isNaN(accessed.getTime())) throw", tests: FS },
   { id: "fs-utimes-new-date", file: "src/vm-fs.ts", find: "const accessed = new Date(atime), modified = new Date(mtime);", replace: "const accessed = new Date(atime), modified = new Date(atime);", tests: FS },
-  { id: "storage-verification", file: "src/storage.ts", find: "exported !== undefined && exported.fingerprint !== verified", replace: "false", tests: ["test/storage.test.ts"] },
+  { id: "storage-import-loads", file: "src/storage.ts", find: "...(imported === undefined ? {} : { loadDataDir: imported.archive }),", replace: "", tests: ["test/storage.test.ts", "test/adapter.test.ts"] },
+  { id: "storage-import-marker", file: "src/storage.ts", find: 'source: imported === undefined ? "new" : "archive"', replace: 'source: "new"', tests: ["test/storage.test.ts"] },
   { id: "storage-staging-strict", file: "src/storage.ts", find: "    relaxedDurability: false,\n    fs: filesystem(host, directory),", replace: "    fs: filesystem(host, directory),", tests: ["test/storage.test.ts"] },
   { id: "storage-marker-flush", file: "src/storage.ts", find: '  host.kit.directory.sync(host.files, markerPath, "file");\n', replace: "", tests: ["test/storage.test.ts"] },
-  { id: "storage-archive-limit", file: "src/storage.ts", find: "exported.archive.size > MAX_ARCHIVE_BYTES", replace: "exported.archive.size >= MAX_ARCHIVE_BYTES", tests: ["test/storage.test.ts"] },
+  { id: "archive-limit", file: "src/archive.ts", find: "host.files.readFile(path, MAX_ARCHIVE_BYTES)", replace: "host.files.readFile(path, MAX_ARCHIVE_BYTES - 1)", tests: ["test/archive.test.ts"] },
+  { id: "archive-regular-file", file: "src/archive.ts", find: "if ((mode & S_IFMT) !== S_IFREG) throw", replace: "if (false) throw", tests: ["test/archive.test.ts"] },
+  { id: "unique-random", file: "src/unique.ts", find: "crypto.getRandomValues(new Uint8Array(16))", replace: "new Uint8Array(16)", tests: ["test/unique.test.ts"] },
   { id: "fingerprint-bigint", file: "src/fingerprint.ts", find: 'typeof value === "bigint" ? value.toString() : value', replace: "value", tests: ["test/fingerprint.test.ts"] },
   { id: "sql-escape-strings", file: "src/sql-text.ts", find: 'if (word.toUpperCase() === "E" && sql.charAt(end) === "\'")', replace: "if (false)", tests: ["test/sql-text.test.ts"] },
   { id: "sql-dollar-quotes", file: "src/sql-text.ts", find: 'char === "$"', replace: 'char === "#"', tests: ["test/sql-text.test.ts"] },
   { id: "guest-files-skip-identical", file: "src/guest-files.ts", find: "if (sameContent(host, file.to, bytes)) {", replace: "if (false) {", tests: ["test/guest-files.test.ts"] },
-  { id: "options-workspace", file: "src/options.ts", find: "if (!value.startsWith(`${WORKSPACE}/`)) throw refusal;", replace: "", tests: ["test/options.test.ts"] },
+  { id: "options-workspace", file: "src/options.ts", find: "if (!value.startsWith(`${WORKSPACE}/`)) return false;", replace: "", tests: ["test/options.test.ts"] },
+  { id: "options-import-outside-data", file: "src/options.ts", find: "value === dataDir || value.startsWith(`${dataDir}/`)", replace: "value === dataDir", tests: ["test/options.test.ts"] },
 ];
 
 const BASELINE_LIMIT_MS = 300_000;

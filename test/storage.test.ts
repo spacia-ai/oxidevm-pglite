@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fingerprint } from "../src/fingerprint.ts";
 import { decodeMarker } from "../src/marker.ts";
 import { openDatabase } from "../src/storage.ts";
-import type { LegacySource, OpenedDatabase, StorageHost, StorageOptions } from "../src/storage.ts";
+import type { ImportSource, OpenedDatabase, StorageHost, StorageOptions } from "../src/storage.ts";
 import { createNodeFiles } from "./support/node-files.ts";
 import type { NodeFilesHarness } from "./support/node-files.ts";
 
@@ -31,7 +31,7 @@ afterEach(async () => {
 });
 
 const host = (): StorageHost => ({ files: harness.files, kit, log: line => { logs.push(line); } });
-const options = (extra: Partial<StorageOptions> = {}): StorageOptions => ({ dataDir, stagingDir, backupDir, pglite: {}, ...extra });
+const options = (extra: Partial<StorageOptions> = {}): StorageOptions => ({ dataDir, stagingDir, pglite: {}, ...extra });
 
 async function open(extra: Partial<StorageOptions> = {}): Promise<OpenedDatabase> {
   const database = await openDatabase(host(), options(extra));
@@ -39,14 +39,14 @@ async function open(extra: Partial<StorageOptions> = {}): Promise<OpenedDatabase
   return database;
 }
 
-/** A legacy database held in memory: its archive and fingerprint, the way the IndexedDB source exports them. */
-async function legacyExport(statements: string): Promise<{ archive: Blob; fingerprint: string }> {
-  const legacy = await PGlite.create();
+/** A database held in memory, archived the way a page exports one for `importArchive`, with its fingerprint. */
+async function exportedDatabase(statements: string): Promise<{ archive: Blob; fingerprint: string }> {
+  const source = await PGlite.create();
   try {
-    await legacy.exec(statements);
-    return { archive: await legacy.dumpDataDir("none"), fingerprint: await fingerprint(legacy) };
+    await source.exec(statements);
+    return { archive: await source.dumpDataDir("none"), fingerprint: await fingerprint(source) };
   } finally {
-    await legacy.close();
+    await source.close();
   }
 }
 
@@ -94,6 +94,7 @@ describe("a new data directory", () => {
     expect(database.origin).toBe("created");
     const aside = fs.readdirSync(backupDir).filter(name => name.startsWith("pgdata-migrating-failed-"));
     expect(aside).toHaveLength(1);
+    expect(aside[0]).toMatch(/^pgdata-migrating-failed-[0-9a-f]{32}$/u);
     expect(fs.readFileSync(path.join(backupDir, aside[0] ?? "", "leftover"), "utf8")).toBe("from a crash");
   });
 
@@ -106,15 +107,6 @@ describe("a new data directory", () => {
     expect(harness.ops).toContain(`mkdir:${path.join(base, "databases", "main")}`);
     expect(harness.ops.indexOf(`fsync:${base}`)).toBeGreaterThan(harness.ops.indexOf(`mkdir:${path.join(base, "databases")}`));
     expect(harness.ops.indexOf(`fsync:${path.join(base, "databases")}`)).toBeGreaterThan(harness.ops.indexOf(`mkdir:${path.join(base, "databases", "main")}`));
-  });
-
-  it("reports a legacy source with no database as a new one", async () => {
-    let asked = 0;
-    const legacy: LegacySource = { export: () => { asked += 1; return Promise.resolve(undefined); } };
-    const database = await open({ legacy });
-    expect(asked).toBe(1);
-    expect(database.origin).toBe("created");
-    expect(markerOf(dataDir).source).toBe("new");
   });
 });
 
@@ -144,58 +136,36 @@ describe("an existing data directory", () => {
   });
 });
 
-describe("migration from a legacy database", () => {
-  const statements = "CREATE TABLE preserved(id integer PRIMARY KEY, label text); INSERT INTO preserved VALUES (42, 'original data'); CREATE SEQUENCE ids;";
+describe("import from an archive", () => {
+  const statements = "CREATE TABLE preserved(id integer PRIMARY KEY, label text); INSERT INTO preserved VALUES (42, 'original data'); CREATE TABLE ticket(id bigserial PRIMARY KEY); CREATE SEQUENCE ids;";
+  const archivePath = "/workspace/pglite-import.tar";
 
-  it("copies the archive into the data directory, verifies the copy, and keeps the archive as a backup", async () => {
-    const exported = await legacyExport(statements);
+  it("loads the archive into a new data directory, which reproduces the source database, and marks where it came from", async () => {
+    const exported = await exportedDatabase(statements);
     let asked = 0;
-    const legacy: LegacySource = { export: () => { asked += 1; return Promise.resolve(exported); } };
-    const database = await open({ legacy });
-    expect(database.origin).toBe("migrated");
+    const source: ImportSource = { load: () => { asked += 1; return Promise.resolve({ archive: exported.archive, path: archivePath }); } };
+    const database = await open({ source });
+    expect(database.origin).toBe("imported");
     expect((await database.db.query("SELECT * FROM preserved")).rows).toEqual([{ id: 42, label: "original data" }]);
-
-    const marker = markerOf(dataDir);
-    expect(marker).toMatchObject({ version: 1, source: "indexeddb", fingerprint: exported.fingerprint });
-    expect(marker.backup).toMatch(new RegExp(`^${backupDir}/pglite-indexeddb-[0-9a-f-]{36}\\.tar$`, "u"));
-    const backup = marker.backup ?? "";
-    expect(Buffer.compare(fs.readFileSync(backup), Buffer.from(await exported.archive.arrayBuffer()))).toBe(0);
-    expect(fs.statSync(backup).mode & 0o777).toBe(0o600);
-    expect(logs.join("\n")).toContain("migrated");
+    expect(markerOf(dataDir)).toEqual({ version: 1, source: "archive", fingerprint: exported.fingerprint, backup: archivePath });
     expect(await fingerprint(database.db)).toBe(exported.fingerprint);
+    expect(logs.join("\n")).toContain(`imported ${archivePath}`);
 
     await database.db.close();
-    await open({ legacy });
+    const again = await open({ source });
+    expect(again.origin).toBe("existing");
     expect(asked).toBe(1);
   });
 
-  it("does not publish a copy that differs from the legacy database, and keeps the attempt and the backup", async () => {
-    const exported = await legacyExport(statements);
-    const legacy: LegacySource = { export: () => Promise.resolve({ archive: exported.archive, fingerprint: "0".repeat(64) }) };
-    await expect(open({ legacy })).rejects.toThrow("Database migration verification failed. Original data and backup are preserved.");
-    expect(fs.existsSync(dataDir)).toBe(false);
-    expect(fs.existsSync(stagingDir)).toBe(true);
-    expect(fs.readdirSync(backupDir).filter(name => name.endsWith(".tar"))).toHaveLength(1);
-  });
-
-  it("refuses an archive over 256 MiB before writing anything", async () => {
-    const huge = Object.defineProperty(new Blob([]), "size", { value: 300 * 1024 ** 2 });
-    const legacy: LegacySource = { export: () => Promise.resolve({ archive: huge, fingerprint: "0".repeat(64) }) };
-    await expect(open({ legacy })).rejects.toThrow("The migration archive exceeds the 256 MiB limit. The IndexedDB database is preserved.");
-    expect(fs.readdirSync(backupDir).filter(name => name.endsWith(".tar"))).toEqual([]);
+  it("passes a failure of the source on, leaving no data directory", async () => {
+    const source: ImportSource = { load: () => Promise.reject(new Error("The import archive /workspace/x.tar does not exist")) };
+    await expect(open({ source })).rejects.toThrow("The import archive /workspace/x.tar does not exist");
     expect(fs.existsSync(dataDir)).toBe(false);
   });
 
-  it("accepts an archive of exactly 256 MiB", async () => {
-    const exported = await legacyExport(statements);
-    const limit = Object.defineProperty(new Blob([exported.archive]), "size", { value: 256 * 1024 ** 2 });
-    const legacy: LegacySource = { export: () => Promise.resolve({ archive: limit, fingerprint: exported.fingerprint }) };
-    expect((await open({ legacy })).origin).toBe("migrated");
-  });
-
-  it("passes a failure of the legacy source on, leaving no data directory", async () => {
-    const legacy: LegacySource = { export: () => Promise.reject(new Error("IndexedDB is unavailable")) };
-    await expect(open({ legacy })).rejects.toThrow("IndexedDB is unavailable");
+  it("refuses an archive that is not a PGlite data directory, leaving no data directory", async () => {
+    const source: ImportSource = { load: () => Promise.resolve({ archive: new Blob(["not a tar archive"]), path: archivePath }) };
+    await expect(open({ source })).rejects.toThrow();
     expect(fs.existsSync(dataDir)).toBe(false);
   });
 });

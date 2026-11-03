@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveDataDir, resolveLegacyName } from "../src/options.ts";
+import { resolveDataDir, resolveImportArchive } from "../src/options.ts";
 
 describe("resolveDataDir", () => {
   it("accepts absolute, normalized paths inside the workspace", () => {
@@ -21,16 +21,23 @@ describe("resolveDataDir", () => {
   });
 });
 
-describe("resolveLegacyName", () => {
-  it("means no migration for an empty name", () => {
-    expect(resolveLegacyName("")).toBeUndefined();
+describe("resolveImportArchive", () => {
+  const dataDir = "/workspace/pgdata";
+
+  it("means no import for an empty value", () => {
+    expect(resolveImportArchive("", dataDir)).toBeUndefined();
   });
 
-  it("accepts the name of an IndexedDB database", () => {
-    for (const value of ["oxidevm-pyodide-v1-pglite", "a", "my db/with spaces & symbols", "ünïcode"]) expect(resolveLegacyName(value), value).toBe(value);
+  it("accepts absolute, normalized paths inside the workspace, the module's own directory included", () => {
+    for (const value of ["/workspace/pglite-import.tar", "/workspace/_oxidevm/import.tar", "/workspace/pgdata.tar", "/workspace/pgdata-old/x.tar", "/workspace/a b/ünïcode.tar"]) {
+      expect(resolveImportArchive(value, dataDir), value).toBe(value);
+    }
   });
 
-  it("refuses control characters", () => {
-    for (const value of ["a\nb", "a\tb", "a\u0000b", "a\u007fb", "\u001f"]) expect(() => resolveLegacyName(value), JSON.stringify(value)).toThrow(/legacyIndexedDb/u);
+  it("refuses a path outside the workspace, not normalized, or inside the data directory it is loaded into", () => {
+    const refused = ["x.tar", "/tmp/x.tar", "/workspace", "/workspace/", "/workspace//x.tar", "/workspace/./x.tar", "/workspace/../x.tar", "/workspace/x.tar/", "/workspace/x\0.tar", "/workspace/pgdata", "/workspace/pgdata/import.tar"];
+    for (const value of refused) expect(() => resolveImportArchive(value, dataDir), JSON.stringify(value)).toThrow("The importArchive option must be empty or an absolute path inside /workspace, outside the data directory, without empty, . or .. segments");
+    expect(() => resolveImportArchive("/workspace/db/main/x.tar", "/workspace/db/main")).toThrow(/importArchive/u);
+    expect(resolveImportArchive("/workspace/db/x.tar", "/workspace/db/main")).toBe("/workspace/db/x.tar");
   });
 });

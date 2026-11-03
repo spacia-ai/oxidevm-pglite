@@ -1,5 +1,6 @@
 import { GUEST_FILES, OXIDEVM_DIRECTORY } from "./layout.ts";
 import type { KitErrno, SyncFiles } from "./ports.ts";
+import { uniqueSuffix } from "./unique.ts";
 
 export interface GuestFileHost {
   readonly fs: Pick<SyncFiles, "lstat" | "mkdir" | "readFile" | "writeFile" | "rename" | "chmod">;
@@ -28,8 +29,9 @@ function sameContent(host: GuestFileHost, target: string, expected: Uint8Array):
 
 /**
  * Makes sure the Python client is in the guest, byte for byte as the release pins it.
- * The manifest declares them as `guestFiles`; the engine's module runner does not write those yet, so the
- * adapter does, atomically (a temporary file renamed into place) and only when something differs.
+ * The manifest declares them as `guestFiles`, which the module runner writes before the adapter starts; the
+ * adapter checks them again and rewrites one only when it differs (atomically: a temporary file renamed into
+ * place), so the client is right even under a runner that did not write guest files.
  */
 export async function ensureGuestFiles(host: GuestFileHost, files: readonly GuestFile[] = GUEST_FILES): Promise<void> {
   try {
@@ -43,7 +45,7 @@ export async function ensureGuestFiles(host: GuestFileHost, files: readonly Gues
       host.fs.chmod(file.to, file.mode);
       continue;
     }
-    const temporary = `${file.to}.tmp-${(host.unique ?? (() => crypto.randomUUID()))()}`;
+    const temporary = `${file.to}.tmp-${(host.unique ?? uniqueSuffix)()}`;
     host.fs.writeFile(temporary, bytes);
     host.fs.chmod(temporary, file.mode);
     host.fs.rename(temporary, file.to);

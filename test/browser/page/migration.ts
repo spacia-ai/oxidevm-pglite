@@ -25,6 +25,30 @@ async function createLegacyDatabase(config: SuiteConfig): Promise<void> {
   await db.close();
 }
 
+/** Where the page writes the exported archive, inside the workspace, and the module's option that names it. */
+const ARCHIVE = "pglite-import.tar";
+const ARCHIVE_PATH = `/workspace/${ARCHIVE}`;
+
+/**
+ * The page side of the migration (README, "Migrate from IndexedDB"): PGlite in the page opens the legacy database,
+ * archives its data directory and writes the archive into the VM. The module, which has no IndexedDB, loads it.
+ */
+async function exportLegacyDatabase(config: SuiteConfig, vm: Awaited<ReturnType<typeof openVM>>): Promise<number> {
+  const legacy = await PGlite.create({
+    dataDir: `idb://${LEGACY}`,
+    pgliteWasmModule: await compiled(config.legacyURLs.wasm),
+    initdbWasmModule: await compiled(config.legacyURLs.initdb),
+    fsBundle: await (await fetch(config.legacyURLs.data)).blob(),
+  });
+  try {
+    const archive = new Uint8Array(await (await legacy.dumpDataDir("none")).arrayBuffer());
+    await vm.workspace.writeFile(ARCHIVE, archive);
+    return archive.length;
+  } finally {
+    await legacy.close();
+  }
+}
+
 async function legacyStillThere(): Promise<boolean> {
   return (await indexedDB.databases()).some(database => database.name === `/pglite/${LEGACY}`);
 }
@@ -32,26 +56,27 @@ async function legacyStillThere(): Promise<boolean> {
 export async function migration(config: SuiteConfig): Promise<readonly ScenarioResult[]> {
   await createLegacyDatabase(config);
   const vm = await openVM(config);
-  const start = () => spawnModule(vm, pglite, { workspaceId: "pglite-migration", options: { legacyIndexedDb: LEGACY } });
+  const start = () => spawnModule(vm, pglite, { workspaceId: "pglite-migration", options: { importArchive: ARCHIVE_PATH } });
   let service: Awaited<ReturnType<typeof start>> | undefined;
   try {
     return await runScenarios([
-      ["migration: the legacy IndexedDB database is copied into the workspace and verified", async () => {
+      ["migration: the page exports the legacy IndexedDB database into the workspace and the module imports it", async () => {
+        const size = await exportLegacyDatabase(config, vm);
         service = await start();
         const rows = await python(vm, `${CLIENT_IMPORT}print(pg.query("SELECT * FROM preserved")["rows"])\nprint(pg.query("SELECT id, note FROM ticket ORDER BY id")["rows"])`);
         expectEqual(rows.split("\n"), ["[{'id': 42, 'label': 'original data'}]", "[{'id': 1, 'note': 'a'}, {'id': 2, 'note': 'b'}]"], "migrated rows");
         const marker: unknown = JSON.parse(await vm.workspace.readText("pgdata/.oxidevm-storage.json"));
         const source: unknown = typeof marker === "object" && marker !== null ? Reflect.get(marker, "source") : undefined;
         const backup: unknown = typeof marker === "object" && marker !== null ? Reflect.get(marker, "backup") : undefined;
-        expectEqual(source, "indexeddb", "marker source");
-        expect(typeof backup === "string" && backup.startsWith("/workspace/_oxidevm/pglite-indexeddb-"), `backup ${String(backup)}`);
-        const size = Number(await python(vm, `import os\nprint(os.stat(${JSON.stringify(backup)}).st_size)`));
-        expect(size > 0, "the backup archive is empty");
+        expectEqual(source, "archive", "marker source");
+        expectEqual(backup, ARCHIVE_PATH, "marker backup");
+        const kept = Number(await python(vm, `import os\nprint(os.stat(${JSON.stringify(ARCHIVE_PATH)}).st_size)`));
+        expectEqual(kept, size, "size of the kept archive");
         expect(await legacyStillThere(), "the legacy IndexedDB database was removed");
         expectEqual(service.info["dataDir"], "/workspace/pgdata", "info.dataDir");
-        return `backup of ${String(size)} bytes kept, legacy database retained`;
+        return `archive of ${String(size)} bytes imported and kept, legacy database retained`;
       }],
-      ["migration: a restart opens the migrated database and does not migrate again", async () => {
+      ["migration: a restart opens the imported database and does not import again", async () => {
         if (service === undefined) throw new Error("The module is not running");
         await python(vm, `${CLIENT_IMPORT}pg.query("INSERT INTO preserved VALUES (43, 'added after the migration')")`);
         const before = await vm.workspace.readText("pgdata/.oxidevm-storage.json");
