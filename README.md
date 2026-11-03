@@ -120,7 +120,7 @@ therefore ends its own session and nothing else.
 | --- | --- | --- |
 | `dataDir` | `/workspace/pgdata` | where the database lives: an absolute path inside `/workspace`, outside `/workspace/_oxidevm` |
 | `durability` | `strict` | `strict`: a statement is answered after its changes are flushed (file contents first, then their directories). `relaxed`: it is answered first and flushed right after; a failed flush is logged and reported to the next change |
-| `importArchive` | empty | the guest path of a PGlite data-directory archive (`dumpDataDir("none")`) to load when the data directory is created; an absolute path inside `/workspace`, outside `dataDir`; empty means a new, empty database. See [Migrate from IndexedDB](#migrate-from-indexeddb) |
+| `importArchive` | empty | a PGlite data-directory archive (`dumpDataDir`, plain or gzip) to load when the data directory is created: one file, or a directory whose regular files, in name order, are its consecutive pieces (at most 64); an absolute path inside `/workspace`, outside `dataDir`; empty means a new, empty database. See [Migrate from IndexedDB](#migrate-from-indexeddb) |
 
 ## Safe by construction
 
@@ -132,7 +132,7 @@ therefore ends its own session and nothing else.
 - **Import.** With `importArchive`, a new database is loaded from that archive in the staging directory, and only a whole,
   marked copy is renamed into place. The marker records `source: "archive"`, the archive's path and the fingerprint of
   the copy (tables, columns, constraints, sequences, views, a digest of every row). The archive is never changed or
-  removed and is limited to 256 MiB. A missing, oversized or unreadable archive fails the start and leaves no data
+  removed and is limited to 256 MiB in all. A missing, oversized or unreadable archive fails the start and leaves no data
   directory, instead of starting an empty database. Once the data directory exists the option is ignored.
 - **Durability.** Every statement's changes are made durable in the VM file system in a fixed order (changed files, then the
   directories that hold them, deepest first); a failed flush fails the statement. File times that PostgreSQL's file system
@@ -178,13 +178,17 @@ export async function startWithLegacyData(vm: UserspaceVM, legacyName: string) {
   if (known && !migrated) {
     const legacy = await PGlite.create({ dataDir: `idb://${legacyName}` });
     try {
-      const archive = await legacy.dumpDataDir("none");
-      await vm.workspace.writeFile("pglite-import.tar", new Uint8Array(await archive.arrayBuffer()));
+      const archive = new Uint8Array(await (await legacy.dumpDataDir("gzip")).arrayBuffer());
+      // One workspace write takes at most 16 MiB, so the archive goes in as numbered pieces of one directory.
+      await vm.workspace.createDirectory("pglite-import");
+      for (let offset = 0, index = 0; offset < archive.length; offset += 16 * 1024 ** 2, index += 1) {
+        await vm.workspace.writeFile(`pglite-import/${String(index).padStart(3, "0")}`, archive.subarray(offset, offset + 16 * 1024 ** 2));
+      }
     } finally {
       await legacy.close();
     }
   }
-  return spawnModule(vm, pglite, { workspaceId: "project-1", options: known && !migrated ? { importArchive: "/workspace/pglite-import.tar" } : {} });
+  return spawnModule(vm, pglite, { workspaceId: "project-1", options: known && !migrated ? { importArchive: "/workspace/pglite-import" } : {} });
 }
 ```
 

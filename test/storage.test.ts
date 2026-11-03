@@ -4,6 +4,7 @@ import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { kit } from "@oxidevm/sdk/wasm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { archiveSource } from "../src/archive.ts";
 import { fingerprint } from "../src/fingerprint.ts";
 import { decodeMarker } from "../src/marker.ts";
 import { openDatabase } from "../src/storage.ts";
@@ -155,6 +156,22 @@ describe("import from an archive", () => {
     const again = await open({ source });
     expect(again.origin).toBe("existing");
     expect(asked).toBe(1);
+  });
+
+  it("loads a gzip archive written in pieces, as a page writes one over 16 MiB", async () => {
+    const source = await PGlite.create();
+    await source.exec(statements);
+    const expected = await fingerprint(source);
+    const gzip = new Uint8Array(await (await source.dumpDataDir("gzip")).arrayBuffer());
+    await source.close();
+    const pieces = path.join(base, "import");
+    fs.mkdirSync(pieces);
+    const size = Math.ceil(gzip.length / 3);
+    for (let index = 0; index * size < gzip.length; index += 1) fs.writeFileSync(path.join(pieces, String(index).padStart(3, "0")), gzip.subarray(index * size, (index + 1) * size));
+    const database = await open({ source: archiveSource({ files: harness.files, errno: kit.errno }, pieces) });
+    expect(database.origin).toBe("imported");
+    expect(await fingerprint(database.db)).toBe(expected);
+    expect(markerOf(dataDir)).toMatchObject({ source: "archive", backup: pieces });
   });
 
   it("passes a failure of the source on, leaving no data directory", async () => {

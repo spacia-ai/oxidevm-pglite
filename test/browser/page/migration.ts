@@ -25,9 +25,10 @@ async function createLegacyDatabase(config: SuiteConfig): Promise<void> {
   await db.close();
 }
 
-/** Where the page writes the exported archive, inside the workspace, and the module's option that names it. */
-const ARCHIVE = "pglite-import.tar";
+/** Where the page writes the exported archive: a directory of pieces, because one workspace write takes at most 16 MiB. */
+const ARCHIVE = "pglite-import";
 const ARCHIVE_PATH = `/workspace/${ARCHIVE}`;
+const PIECE_BYTES = 16 * 1024 ** 2;
 
 /**
  * The page side of the migration (README, "Migrate from IndexedDB"): PGlite in the page opens the legacy database,
@@ -41,8 +42,11 @@ async function exportLegacyDatabase(config: SuiteConfig, vm: Awaited<ReturnType<
     fsBundle: await (await fetch(config.legacyURLs.data)).blob(),
   });
   try {
-    const archive = new Uint8Array(await (await legacy.dumpDataDir("none")).arrayBuffer());
-    await vm.workspace.writeFile(ARCHIVE, archive);
+    const archive = new Uint8Array(await (await legacy.dumpDataDir("gzip")).arrayBuffer());
+    await vm.workspace.createDirectory(ARCHIVE);
+    for (let offset = 0, index = 0; offset < archive.length; offset += PIECE_BYTES, index += 1) {
+      await vm.workspace.writeFile(`${ARCHIVE}/${String(index).padStart(3, "0")}`, archive.subarray(offset, offset + PIECE_BYTES));
+    }
     return archive.length;
   } finally {
     await legacy.close();
@@ -70,7 +74,7 @@ export async function migration(config: SuiteConfig): Promise<readonly ScenarioR
         const backup: unknown = typeof marker === "object" && marker !== null ? Reflect.get(marker, "backup") : undefined;
         expectEqual(source, "archive", "marker source");
         expectEqual(backup, ARCHIVE_PATH, "marker backup");
-        const kept = Number(await python(vm, `import os\nprint(os.stat(${JSON.stringify(ARCHIVE_PATH)}).st_size)`));
+        const kept = Number(await python(vm, `import os\nd = ${JSON.stringify(ARCHIVE_PATH)}\nprint(sum(os.stat(os.path.join(d, n)).st_size for n in os.listdir(d)))`));
         expectEqual(kept, size, "size of the kept archive");
         expect(await legacyStillThere(), "the legacy IndexedDB database was removed");
         expectEqual(service.info["dataDir"], "/workspace/pgdata", "info.dataDir");

@@ -6,6 +6,7 @@
 //
 //   pnpm test:browser [core] [crash] [migration]
 //   OXIDEVM_TEST_USERSPACE_IMAGE=<image reference JSON> OXIDEVM_TEST_USERSPACE_IMAGE_DIR=<bundle dist> pnpm test:browser
+//   OXIDEVM_MODULE_FRAME_DIR=<module-frame directory> serves another build of the SDK module frame than the installed one
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -71,7 +72,8 @@ interface Layout {
   readonly moduleFrame: { readonly dir: string; readonly headers: readonly (readonly [string, string])[] };
 }
 
-const MODULE_FRAME = join(root, "node_modules/@oxidevm/sdk/assets/module-frame");
+/** The installed SDK's module frame; `OXIDEVM_MODULE_FRAME_DIR` serves another build of it (an SDK checkout with a fix). */
+const MODULE_FRAME = process.env["OXIDEVM_MODULE_FRAME_DIR"] ?? join(root, "node_modules/@oxidevm/sdk/assets/module-frame");
 
 /** The response headers `frame.json` prescribes for the module frame's files; without them the frame's CSP is missing. */
 async function moduleFrameHeaders(): Promise<readonly (readonly [string, string])[]> {
