@@ -20,6 +20,7 @@ export interface FakeVmOptions {
   readonly dataDir?: string;
   readonly durability?: "relaxed" | "strict";
   readonly importArchive?: string;
+  readonly storage?: "workspace" | "memory";
 }
 
 /**
@@ -85,7 +86,7 @@ export class FakeVm {
     };
     return {
       signal: new AbortController().signal,
-      options: { dataDir: this.options.dataDir ?? "/workspace/pgdata", durability: this.options.durability ?? "strict", importArchive: this.options.importArchive ?? "" },
+      options: { dataDir: this.options.dataDir ?? "/workspace/pgdata", durability: this.options.durability ?? "strict", importArchive: this.options.importArchive ?? "", storage: this.options.storage ?? "workspace" },
       artifacts,
       kit,
       stdio: { stdin: descriptor(0), stdout: descriptor(1), stderr: descriptor(2) },

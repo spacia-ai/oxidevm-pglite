@@ -15,7 +15,7 @@ It starts no program of the image, and it uses no browser storage: no IndexedDB,
 ## Use it
 
 ```sh
-oxidevm wasm add github:spacia-ai/oxidevm-pglite@v0.3.1
+oxidevm wasm add github:spacia-ai/oxidevm-pglite@v0.4.0
 ```
 
 The command shows what the module declares and asks before it installs anything. It needs a cross-origin isolated page
@@ -30,7 +30,7 @@ import { pglite } from "./oxidevm.modules.generated";
 
 // A service: it listens until it is stopped, and says where.
 const database = await spawnModule(vm, pglite, { workspaceId: "project-1" });
-console.log(database.info); // { version: "18.6", backend: "pglite-wasm", dataDir: "/workspace/pgdata", durability: "strict" }
+console.log(database.info); // { version: "18.6", backend: "pglite-wasm", storage: "workspace", dataDir: "/workspace/pgdata", durability: "strict" }
 // ... run Linux programs in the VM that use it ...
 await stopModule(database); // drains, flushes the database, removes the socket, exits 0
 ```
@@ -160,6 +160,16 @@ therefore ends its own session and nothing else.
 | `dataDir` | `/workspace/pgdata` | where the database lives: an absolute path inside `/workspace`, outside `/workspace/_oxidevm` |
 | `durability` | `strict` | `strict`: a statement is answered after its changes are flushed (file contents first, then their directories). `relaxed`: it is answered first and flushed right after; a failed flush is logged and reported to the next change |
 | `importArchive` | empty | a PGlite data-directory archive (`dumpDataDir`, plain or gzip) to load when the data directory is created: one file, or a directory whose regular files, in name order, are its consecutive pieces (at most 64); an absolute path inside `/workspace`, outside `dataDir`; empty means a new, empty database. See [Migrate from IndexedDB](#migrate-from-indexeddb) |
+| `storage` | `workspace` | `workspace`: the database is files of the VM under `dataDir` and is kept. `memory`: the database lives in the service's memory, starts empty at every start and is gone when the service stops; `dataDir` and `durability` are not used, and `importArchive` is refused. See [A memory database](#a-memory-database) |
+
+## A memory database
+
+`spawnModule(vm, pglite, { workspaceId, options: { storage: "memory" } })` starts a database that never touches the VM's
+files. Use it for a demo, a lab or a test whose database is thrown away: creating a data directory writes about 39 MB
+through the VM file system, flushed file by file, and that is most of a first start. A memory database skips it. Everything
+else is the same: both endpoints, several connections, `psql`, `pg_dump`. `info` reports `storage: "memory"`
+and `durability: "none"`, and no `dataDir`. Nothing is recoverable after the service stops; export with `pg_dump` first if
+that matters.
 
 ## Safe by construction
 
@@ -236,6 +246,12 @@ export async function startWithLegacyData(vm: UserspaceVM, legacyName: string) {
 The IndexedDB database is only read, never changed or removed; delete it yourself once you have checked the workspace copy.
 The `migration` browser suite runs exactly this sequence against a real engine.
 
+## Changes in 0.4.0
+
+- **`storage: "memory"`.** A database that lives in the service's memory and is not kept, for demos, labs and tests. It
+  starts several times faster than a new data directory; see [A memory database](#a-memory-database).
+- **`info` gains `storage`.** It is `"workspace"` for a database in the VM's files, which stays the default.
+
 ## Changes in 0.3.1
 
 - **`NOTICES.txt` names its own release.** The file's first lines said "oxidevm-pglite 0.1.0" in 0.2.0 and 0.3.0. It now
@@ -299,7 +315,7 @@ pnpm run test:conformance        # oxidevm wasm test: the runner's contract, in 
 pnpm test:browser                # real engine + Chromium (--browser=firefox|webkit), see below
 ```
 
-`@oxidevm/sdk` and `@oxidevm/cli` are exact devDependencies, installed from npm; 0.3.1 is built and tested against the
+`@oxidevm/sdk` and `@oxidevm/cli` are exact devDependencies, installed from npm; 0.4.0 is built and tested against the
 0.0.12 line. The committed `pnpm-workspace.yaml` allows
 the build script of `esbuild`, and `pnpm-lock.yaml` is committed.
 
@@ -349,18 +365,18 @@ Publishing changes what others can install, so it goes draft, verify, publish: t
 against its own `SHA256SUMS` before it becomes visible. The tag must name the version in `module.ts`.
 
 ```sh
-git tag v0.3.1 && git push origin v0.3.1
+git tag v0.4.0 && git push origin v0.4.0
 pnpm run build
-gh release create v0.3.1 dist/* --draft --verify-tag --title v0.3.1
-gh release download v0.3.1 --dir verify && (cd verify && sha256sum --check SHA256SUMS)
-gh release edit v0.3.1 --draft=false
+gh release create v0.4.0 dist/* --draft --verify-tag --title v0.4.0
+gh release download v0.4.0 --dir verify && (cd verify && sha256sum --check SHA256SUMS)
+gh release edit v0.4.0 --draft=false
 ```
 
 `pnpm run release` prints these steps and runs none of them. The `release` workflow does the same in GitHub Actions, in two
 jobs: a read-only one fetches the mirrored WebAssembly and builds, and a second one, which installs nothing, drafts, verifies
 and publishes. The `ci` workflow runs on pushes to `main` and on pull requests, and `release` runs when a `v*` tag is pushed.
 Consumers install with
-`oxidevm wasm add github:spacia-ai/oxidevm-pglite@v0.3.1`.
+`oxidevm wasm add github:spacia-ai/oxidevm-pglite@v0.4.0`.
 
 ### Build warnings
 

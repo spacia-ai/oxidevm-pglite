@@ -18,7 +18,7 @@ describe("the manifest", () => {
   });
 
   it("is a service for Emscripten-built WebAssembly, exclusive per workspace, serving at most four clients", () => {
-    expect(manifest).toMatchObject({ id: "pglite", version: "0.3.1", abi: "emscripten", process: { kind: "service", exclusive: "workspace" }, limits: { clients: 4, startupMs: 300_000 } });
+    expect(manifest).toMatchObject({ id: "pglite", version: "0.4.0", abi: "emscripten", process: { kind: "service", exclusive: "workspace" }, limits: { clients: 4, startupMs: 300_000 } });
   });
 
   it("exposes the JSON endpoint on a Unix socket and the PostgreSQL protocol on the standard port", () => {
@@ -42,6 +42,7 @@ describe("the manifest", () => {
       dataDir: { type: "string", maxLength: 255, default: "/workspace/pgdata" },
       durability: { type: "enum", values: ["relaxed", "strict"], default: "strict" },
       importArchive: { type: "string", maxLength: 255, default: "" },
+      storage: { type: "enum", values: ["workspace", "memory"], default: "workspace" },
     });
   });
 
