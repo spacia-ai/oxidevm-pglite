@@ -67,14 +67,51 @@ declared". A service still serves programs in the VM through `expose`: the Unix 
 and `127.0.0.1:5432`, which the runner binds and listens on for it. Nothing connects to the internet, so it works the same
 offline, and no host is disclosed.
 
-## One backend
+## One backend, shared by turns
 
-PGlite has one PostgreSQL backend. A native connection therefore **leases the whole database for as long as it is
-connected**: other native connections wait for it (up to five minutes, the idle limit), and a JSON request waits 250 ms
-and is then answered with `A native PostgreSQL connection owns the database. Close it before using oxidevm.query().`
-When the connection ends (cleanly or not) the backend is restored (`ROLLBACK`, `DISCARD ALL`) before the next client
-gets it, so settings, prepared statements and transactions cannot leak. A native session cannot start while a JSON
-client has left a transaction open (`BEGIN` without `COMMIT`); the JSON client sees that transaction survive.
+PGlite has one PostgreSQL backend. The clients share it the way clients share a server connection behind a
+transaction-mode connection pooler: any number of native connections (up to the four-client cap) can be open at once,
+and each one **holds the backend only while it has work in flight**:
+
+- one simple query, from the message to its answer;
+- a transaction, from `BEGIN` until `COMMIT` or `ROLLBACK` (also a failed one, until its `ROLLBACK`);
+- an extended-protocol exchange (`Parse`, `Bind`, `Execute`, ...) until its `Sync`, and a `COPY` until it ends.
+
+Between those it holds nothing, so a tool that opens two or more connections and uses them in turn (migration tools,
+ORMs, connection pools) works. A connection that needs the backend while another holds it waits, in arrival order.
+The wait ends after five minutes, the idle limit, with a fatal error `55P03` (`Another connection kept the database
+busy ...`). The answer to a connection attempt never waits: a connection is greeted while another is in the middle
+of a transaction.
+
+There is still one backend, so nothing runs in parallel, and **a connection that waits for another connection's
+open transaction cannot be helped by that transaction's owner**: a program that begins a transaction on connection A
+and then needs an answer on connection B before it ends A's transaction waits the five minutes. PostgreSQL would
+run both at once; this module cannot.
+
+The JSON endpoint is one more client. A JSON request waits 250 ms for a native connection that is in the middle of a
+statement or a transaction and is then answered with `A native PostgreSQL connection is using the database (a running
+statement or an open transaction). Try again when it is done.` A native connection cannot take its turn while a JSON
+client has left a transaction open (`BEGIN` without `COMMIT`): it is closed with the fatal error `An embedded
+transaction is active. Commit or roll it back before opening a native session.`, and the JSON client's transaction
+survives.
+
+### What a session owns, now that sessions share one
+
+All clients are one PostgreSQL session. What that means for the things a session normally owns:
+
+| | Behavior |
+| --- | --- |
+| Session settings: `SET`, `search_path`, `application_name`, `statement_timeout`, `SET ROLE`, the parameters of the startup packet or connection URL (`?search_path=dev`), `options=-c name=value` | **Per connection.** When the backend changes hands, the settings of the connection that had it are remembered and reset, and the next connection's are put back, so two connections with different `search_path` each see their own. The JSON endpoint has its own too. One connection alone pays nothing for this. Not preserved: custom settings (`SET myapp.user = ...`, hidden from `pg_settings`), which are reset when another client takes a turn; use `SET LOCAL` in a transaction. `RESET name` and `RESET ALL` return to the server's default, not to the startup packet's value. `client_encoding` in the startup packet is ignored: the server answers in UTF8, as it says in its greeting. A startup setting PostgreSQL refuses ends the connection with a fatal error at its first statement, not at the greeting |
+| Transactions, `SET LOCAL`, cursors, `ON COMMIT DROP` tables, transaction-level advisory locks | **Per connection**: the connection keeps the backend until its transaction ends, and a connection that goes away in the middle is rolled back |
+| Prepared statements of the protocol (`Parse`, what drivers use), including the unnamed one | **Per connection.** Their names are prefixed with the connection's slot (`0~`, `1~`, ...) before PostgreSQL sees them, so two drivers that both prepare `S_1` or `_pg3_0` do not collide, and they are closed when the connection ends. The prefixed name is what `pg_prepared_statements` and error messages show, and SQL `EXECUTE`/`DEALLOCATE` with the driver's own name does not find such a statement. PostgreSQL keeps 63 bytes of a name, so only the first 61 bytes of a driver's name count |
+| SQL `PREPARE name`, temporary tables, sequences' `currval`, `WITH HOLD` cursors | **Shared.** Every connection sees them, and two connections that use the same name collide. They last until the last native connection has gone |
+| Session-level advisory locks (`pg_advisory_lock`) | **Shared, so they never block**: every connection is the same session, to which PostgreSQL grants a lock it already holds. Taking and releasing them works (migration tools do), but they exclude nobody. Since nothing runs in parallel and a transaction keeps the backend, a migration inside a transaction is still alone |
+| `LISTEN` / `NOTIFY` | **Not per connection.** A notification is delivered in the answer to the next statement of whichever connection runs one, not pushed to the connection that listens |
+| `DISCARD ALL`, `DEALLOCATE ALL`, `UNLISTEN *`, `pg_advisory_unlock_all()` | Act on the shared session: they also remove what other open connections prepared or locked |
+
+When the last native connection has gone the backend is restored with `DISCARD ALL` before the next client's turn, so a
+later `psql` starts clean. A connection that ends in the middle of something is cleaned up at once: its transaction is
+rolled back and the backend is free for the others.
 
 ## The JSON endpoint (`oxidevm-sql/1`)
 
@@ -92,7 +129,7 @@ reply    {"ok": true, "result": {"rows": [{"next": 42}], "fields": [{"name": "ne
 | request | 64 KiB (`Database request exceeds 64 KiB`; the body is not read) |
 | reply | 1 MiB (`Database response exceeds 1 MiB. Use LIMIT or select fewer columns.`) |
 | one request, from first byte to last | 30 seconds; after that nothing is answered and the connection is closed |
-| wait for a native connection | 250 ms |
+| wait for a native connection that is in a statement or a transaction | 250 ms |
 | `COPY` | refused (`COPY is unavailable through this experimental SQL bridge`): use port 5432 |
 
 64-bit integers (`bigint`) arrive as strings, because JSON cannot hold them, and an integer above 2^53 in `params` loses
@@ -106,7 +143,8 @@ that write (`EPIPE`) instead of ending the module.
 Protocol 3.0 only: simple and extended queries, prepared statements, binary results, `COPY` in both directions (text and
 binary), `pg_dump`. SSL and GSS-encryption requests are declined (`N`), cancel requests are accepted and ignored (there is
 no second backend to signal). Frontend messages are limited to 16 MiB and one `COPY FROM STDIN` exchange to 64 MiB. At most
-four clients at once (`limits.clients`): a fifth connection is closed at once.
+four clients at once (`limits.clients`): a fifth connection is closed at once. The four share the one backend by turns
+(see [One backend, shared by turns](#one-backend-shared-by-turns)); a connection that is silent for five minutes is closed.
 
 A response is collected while a statement runs and written with the connection's own `write` when it is done. Two moments
 cannot wait for the event loop and write synchronously with `noSignal` (a closed peer answers `EPIPE`, never SIGPIPE): a
@@ -148,6 +186,8 @@ avoid SIGPIPE) are gone, and with them the module's need for `process.spawn` and
 is a pinned artifact the manifest declares as a `guestFile`; the runner does not write those yet, so the adapter also writes
 it, atomically and only when it differs. Deliberate differences:
 
+- Native connections share the backend by turns instead of leasing it for as long as they are connected (see
+  [One backend, shared by turns](#one-backend-shared-by-turns)), and the startup packet's settings are honored.
 - A request must be exactly `{ sql, params }` (the sample ignored other keys).
 - A backslash escapes only inside `E'...'` constants when the module decides whether a statement is `COPY`, as PostgreSQL does
   with `standard_conforming_strings` on; the sample treated it as an escape everywhere, so `SELECT '\'; COPY t FROM STDIN` was
@@ -194,6 +234,22 @@ export async function startWithLegacyData(vm: UserspaceVM, legacyName: string) {
 
 The IndexedDB database is only read, never changed or removed; delete it yourself once you have checked the workspace copy.
 The `migration` browser suite runs exactly this sequence against a real engine.
+
+## Changes since 0.2.0 (not released)
+
+- **Several native connections at once.** In 0.2.0 a native connection leased the whole database for as long as it was
+  connected, and a second one waited up to five minutes, so every tool that opens two connections (Atlas `schema apply`
+  and `migrate apply`, most migration tools, ORMs and pools) hung. Connections now take turns on the backend; see
+  [One backend, shared by turns](#one-backend-shared-by-turns) for what is per connection and what is shared.
+- **Startup parameters are honored.** `search_path`, `application_name` and the other settings of the startup packet or
+  connection URL, and `options=-c name=value`, were ignored in 0.2.0; they are now the connection's own settings.
+- **The JSON endpoint is refused less often and says something else.** An open, idle native connection no longer blocks
+  it; only one in the middle of a statement or a transaction does, and the message is now `A native PostgreSQL connection
+  is using the database (a running statement or an open transaction). Try again when it is done.` (0.2.0: `A native
+  PostgreSQL connection owns the database. Close it before using oxidevm.query().`).
+- **A native connection is no longer refused at its start** while a JSON client has a transaction open, but at its first
+  statement, with a fatal error the client can show.
+- **Prepared statements appear under prefixed names** (`0~name`) in `pg_prepared_statements`.
 
 ## Changes in 0.2.0
 
@@ -268,7 +324,7 @@ accepts both whole, and the core suite checks it with `psql -o /dev/null` and 30
 
 The suites: **core** (start and stop, the JSON reply shape, the Python client, limits, `psql`, large writes to
 `/dev/null`, psycopg with prepared statements, binary, `COPY` in and out, 2 MiB and 8 MiB results, an idle connection
-and a vanished client, session isolation, clients that hang up in the middle of a large result while another keeps
+and a vanished client, the JSON endpoint answering while a native connection is open and idle, clients that hang up in the middle of a large result while another keeps
 getting answers (one that closes cleanly right after asking for 30 MB, one that resets the connection after 64 KiB, and
 the real `psql` killed while it receives a 200 MB `COPY`), JSON clients that hang up before reading their reply, the
 four-client cap, a second start failing busy, a service killed with SIGKILL whose stale Unix socket the next start replaces,

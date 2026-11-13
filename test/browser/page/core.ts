@@ -132,7 +132,7 @@ except pg.PGliteError as error:
       expectEqual(counts, "30000000 30000000", "what write(2) and writev(2) of 30 MB to /dev/null returned");
       return `psql exited 0; write and writev returned ${counts}`;
     }],
-    ["psycopg + session isolation: extended protocol, binary, COPY, large results, idle connection, vanished client", async () => {
+    ["psycopg + sharing the backend: extended protocol, binary, COPY, large results, idle connection, vanished client", async () => {
       await ensureClients();
       await vm.workspace.writeText("_oxidevm/driver-test.py", DRIVER);
       await vm.workspace.remove("_oxidevm/pg-idle-ready").catch(() => undefined);
@@ -146,13 +146,14 @@ except pg.PGliteError as error:
         const early = await driver;
         throw new Error(`the driver ended before its idle connection: ${String(early.status)} ${early.stdout.slice(-500)} ${early.stderr.slice(-1500)}`);
       }
-      const busy = exchangeOf(await python(vm, rawExchange(sqlRequest("SELECT 42"))));
-      expectEqual(busy.reply, { ok: false, error: "A native PostgreSQL connection owns the database. Close it before using oxidevm.query()." }, "isolation reply");
+      // The driver's connection is open and idle, outside a transaction: it holds nothing, so the JSON endpoint answers.
+      const meanwhile = await python(vm, `${CLIENT_IMPORT}print(pg.query("SELECT 42 AS answer")["rows"])`);
+      expectEqual(meanwhile, "[{'answer': 42}]", "the JSON endpoint's answer while a native connection is open and idle");
       const finished = await driver;
       expect(finished.status === 0 && finished.stdout.includes("PSYCOPG_EXTENDED_BINARY_COPY_LARGE_RECOVERY_OK"), `driver: ${String(finished.status)} ${finished.stdout.slice(-500)} ${finished.stderr.slice(-1500)}`);
       const afterwards = await python(vm, `${CLIENT_IMPORT}print(pg.query("SELECT count(*)::int AS n FROM wire_data")["rows"])`);
       expectEqual(afterwards, "[{'n': 3}]", "rows after the session");
-      return "psycopg ok, JSON endpoint refused while the native connection was open";
+      return "psycopg ok, JSON endpoint answered while the native connection was open and idle";
     }],
     ["hang-up: a client that vanishes in the middle of a large result ends its own session only, while another client keeps getting answers", async () => {
       await ensureClients();
