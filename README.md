@@ -15,13 +15,14 @@ It starts no program of the image, and it uses no browser storage: no IndexedDB,
 ## Use it
 
 ```sh
-oxidevm wasm add github:spacia-ai/oxidevm-pglite@v0.2.0
+oxidevm wasm add github:spacia-ai/oxidevm-pglite@v0.3.0
 ```
 
 The command shows what the module declares and asks before it installs anything. It needs a cross-origin isolated page
 (see the [module documentation](https://oxidevm.dev/docs)) and `@oxidevm/sdk` 0.0.12 or later, whose module frame (engine
 ADR 0028) runs it. A self-hosted runtime serves that frame at `<runtime.baseUrl>module-frame/` with the headers of the
-SDK's `frame.json`. Version 0.1.0 does not start on 0.0.12; see [Changes in 0.2.0](#changes-in-020).
+SDK's `frame.json`. Version 0.1.0 does not start on 0.0.12; see [Changes in 0.2.0](#changes-in-020). What 0.3.0 changed
+for native connections is in [Changes in 0.3.0](#changes-in-030).
 
 ```ts
 import { spawnModule, stopModule } from "@oxidevm/sdk/wasm";
@@ -235,7 +236,7 @@ export async function startWithLegacyData(vm: UserspaceVM, legacyName: string) {
 The IndexedDB database is only read, never changed or removed; delete it yourself once you have checked the workspace copy.
 The `migration` browser suite runs exactly this sequence against a real engine.
 
-## Changes since 0.2.0 (not released)
+## Changes in 0.3.0
 
 - **Several native connections at once.** In 0.2.0 a native connection leased the whole database for as long as it was
   connected, and a second one waited up to five minutes, so every tool that opens two connections (Atlas `schema apply`
@@ -292,7 +293,7 @@ pnpm run test:conformance        # oxidevm wasm test: the runner's contract, in 
 pnpm test:browser                # real engine + Chromium (--browser=firefox|webkit), see below
 ```
 
-`@oxidevm/sdk` and `@oxidevm/cli` are exact devDependencies, installed from npm; 0.2.0 is built and tested against the
+`@oxidevm/sdk` and `@oxidevm/cli` are exact devDependencies, installed from npm; 0.3.0 is built and tested against the
 0.0.12 line. The committed `pnpm-workspace.yaml` allows
 the build script of `esbuild`, and `pnpm-lock.yaml` is committed.
 
@@ -342,18 +343,18 @@ Publishing changes what others can install, so it goes draft, verify, publish: t
 against its own `SHA256SUMS` before it becomes visible. The tag must name the version in `module.ts`.
 
 ```sh
-git tag v0.2.0 && git push origin v0.2.0
+git tag v0.3.0 && git push origin v0.3.0
 pnpm run build
-gh release create v0.2.0 dist/* --draft --verify-tag --title v0.2.0
-gh release download v0.2.0 --dir verify && (cd verify && sha256sum --check SHA256SUMS)
-gh release edit v0.2.0 --draft=false
+gh release create v0.3.0 dist/* --draft --verify-tag --title v0.3.0
+gh release download v0.3.0 --dir verify && (cd verify && sha256sum --check SHA256SUMS)
+gh release edit v0.3.0 --draft=false
 ```
 
 `pnpm run release` prints these steps and runs none of them. The `release` workflow does the same in GitHub Actions, in two
 jobs: a read-only one fetches the mirrored WebAssembly and builds, and a second one, which installs nothing, drafts, verifies
 and publishes. The `ci` workflow runs on pushes to `main` and on pull requests, and `release` runs when a `v*` tag is pushed.
 Consumers install with
-`oxidevm wasm add github:spacia-ai/oxidevm-pglite@v0.2.0`.
+`oxidevm wasm add github:spacia-ai/oxidevm-pglite@v0.3.0`.
 
 ### Build warnings
 
