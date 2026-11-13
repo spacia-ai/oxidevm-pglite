@@ -1,7 +1,7 @@
 OxideVM PGlite module: notices
 ==============================
 
-This release (oxidevm-pglite 0.3.1) contains:
+This release (oxidevm-pglite 0.4.0) contains:
 
   adapter.mjs          the module's code, with the PGlite JavaScript library bundled in
   pglite.wasm          PostgreSQL 18.6 for WebAssembly, mirrored byte for byte from @electric-sql/pglite 0.5.14

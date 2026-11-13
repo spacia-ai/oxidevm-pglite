@@ -1,3 +1,4 @@
+import { PGlite } from "@electric-sql/pglite";
 import type { PGliteOptions } from "@electric-sql/pglite";
 import { defineModule } from "@oxidevm/sdk/wasm";
 import { createClientSink } from "./src/client-sink.ts";
@@ -18,7 +19,7 @@ import { wireSession } from "./src/wire.ts";
 export default defineModule({
   manifest: {
     id: "pglite",
-    version: "0.3.1",
+    version: "0.4.0",
     abi: "emscripten",
     artifacts: [
       { name: "pglite.wasm", from: "upstream/pglite.wasm" },
@@ -44,6 +45,7 @@ export default defineModule({
       dataDir: { type: "string", maxLength: 255, default: "/workspace/pgdata" },
       durability: { type: "enum", values: ["relaxed", "strict"], default: "strict" },
       importArchive: { type: "string", maxLength: 255, default: "" },
+      storage: { type: "enum", values: ["workspace", "memory"], default: "workspace" },
     },
     license: { spdx: "Apache-2.0 AND PostgreSQL AND MIT AND Unicode-3.0 AND BSD-3-Clause AND Apache-2.0 WITH LLVM-exception", notices: ["NOTICES.txt"] },
     upstream: [
@@ -54,6 +56,8 @@ export default defineModule({
   adapter: async host => {
     const dataDir = resolveDataDir(host.options.dataDir);
     const importArchive = resolveImportArchive(host.options.importArchive, dataDir);
+    const memory = host.options.storage === "memory";
+    if (memory && importArchive !== undefined) throw new Error("The importArchive option needs storage \"workspace\": a memory database always starts empty");
     const { pid } = await host.process.info();
     await ensureGuestFiles({ fs: host.fs, artifacts: host.artifacts, errno: host.kit.errno });
 
@@ -63,16 +67,21 @@ export default defineModule({
       initdbWasmModule: await host.artifacts.compile("initdb.wasm"),
       fsBundle: new Blob([await host.artifacts.bytes("pglite.data")]),
     };
-    const { db } = await openDatabase(
+    // A memory database is PGlite's own in-memory file system: nothing is written to the VM, so creating it costs
+    // a fraction of a data directory's first start, and it is gone when the service stops.
+    const db = memory ? await PGlite.create({ ...pglite, relaxedDurability: false }) : (await openDatabase(
       { files: host.fs, kit: host.kit, log: line => { host.log(line); } },
       { dataDir, stagingDir: STAGING_DIRECTORY, pglite, ...(importArchive === undefined ? {} : { source: archiveSource({ files: host.fs, errno: host.kit.errno }, importArchive) }) },
-    );
+    )).db;
+    if (memory) host.log("created a new PostgreSQL database in memory; it is not kept");
     const version = (await db.query<{ server_version: string }>("SHOW server_version")).rows[0]?.server_version;
     if (version === undefined) throw new Error("PostgreSQL did not report its version");
 
     const backend = createSharedBackend({ gate: host.kit.gate(), db });
     return {
-      info: () => ({ version, backend: BACKEND, dataDir, durability: host.options.durability }),
+      info: () => memory
+        ? { version, backend: BACKEND, storage: "memory" as const, durability: "none" as const }
+        : { version, backend: BACKEND, storage: "workspace" as const, dataDir, durability: host.options.durability },
       protocols: {
         sql: jsonEndpoint({ database: { query: (sql, params) => db.query<Record<string, unknown>>(sql, params) }, gate: backend.embedded, pid, framing: host.kit.framing }),
         pg: connection => wireSession(
