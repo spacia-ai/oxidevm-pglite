@@ -6,6 +6,7 @@ import { kit } from "@oxidevm/sdk/wasm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { int32, join } from "../src/bytes.ts";
 import { VMPostgresFS } from "../src/vm-fs.ts";
+import { createSharedBackend } from "../src/session.ts";
 import { wireSession } from "../src/wire.ts";
 import { fakeConnection } from "./support/connection.ts";
 import type { FakeConnection } from "./support/connection.ts";
@@ -36,7 +37,7 @@ function begin(input: readonly Uint8Array[], options: { readonly closed?: boolea
   const connection = fakeConnection(join(...input), options.closed === undefined ? {} : { closed: options.closed });
   const sink = memorySink();
   const never = new AbortController().signal;
-  const done = wireSession(connection, { db: options.database ?? db, version: "18.6", gate: kit.gate(), sink, readExactly: kit.framing.readExactly, idle: () => never });
+  const done = wireSession(connection, { db: options.database ?? db, version: "18.6", backend: createSharedBackend({ gate: kit.gate(), db: options.database ?? db }), sink, readExactly: kit.framing.readExactly, idle: () => never });
   return { sink, connection, done };
 }
 

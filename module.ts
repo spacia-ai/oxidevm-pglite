@@ -6,6 +6,7 @@ import { BACKEND, jsonEndpoint } from "./src/json-endpoint.ts";
 import { STAGING_DIRECTORY } from "./src/layout.ts";
 import { archiveSource } from "./src/archive.ts";
 import { resolveDataDir, resolveImportArchive } from "./src/options.ts";
+import { createSharedBackend } from "./src/session.ts";
 import { openDatabase } from "./src/storage.ts";
 import { wireSession } from "./src/wire.ts";
 
@@ -17,7 +18,7 @@ import { wireSession } from "./src/wire.ts";
 export default defineModule({
   manifest: {
     id: "pglite",
-    version: "0.2.0",
+    version: "0.3.0",
     abi: "emscripten",
     artifacts: [
       { name: "pglite.wasm", from: "upstream/pglite.wasm" },
@@ -69,14 +70,14 @@ export default defineModule({
     const version = (await db.query<{ server_version: string }>("SHOW server_version")).rows[0]?.server_version;
     if (version === undefined) throw new Error("PostgreSQL did not report its version");
 
-    const gate = host.kit.gate();
+    const backend = createSharedBackend({ gate: host.kit.gate(), db });
     return {
       info: () => ({ version, backend: BACKEND, dataDir, durability: host.options.durability }),
       protocols: {
-        sql: jsonEndpoint({ database: { query: (sql, params) => db.query<Record<string, unknown>>(sql, params) }, gate, pid, framing: host.kit.framing }),
+        sql: jsonEndpoint({ database: { query: (sql, params) => db.query<Record<string, unknown>>(sql, params) }, gate: backend.embedded, pid, framing: host.kit.framing }),
         pg: connection => wireSession(
           { signal: connection.signal, read: maxBytes => connection.read(maxBytes), readSync: maxBytes => host.fs.read(connection.fd, maxBytes) },
-          { db, version, gate, sink: createClientSink({ connection, fs: host.fs }), readExactly: host.kit.framing.readExactly },
+          { db, version, backend, sink: createClientSink({ connection, fs: host.fs }), readExactly: host.kit.framing.readExactly },
         ),
       },
       close: () => db.close(),

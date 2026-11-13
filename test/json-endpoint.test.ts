@@ -162,7 +162,7 @@ describe("oxidevm-sql/1 failures", () => {
     expect(replyOf(connection)).toMatchObject({ ok: true });
   });
 
-  it("says a native connection owns the database when the database stays busy", async () => {
+  it("says a native connection is using the database when the database stays busy", async () => {
     const gate = kit.gate();
     const holder = await gate.acquire(new AbortController().signal);
     const control = controls();

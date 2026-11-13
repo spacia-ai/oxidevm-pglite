@@ -216,7 +216,7 @@ while time.monotonic() < end:
                 raise ConnectionError('closed in the middle of a reply')
             data += chunk
         reply = json.loads(data)
-        outcomes.append('ok' if reply.get('ok') else 'busy' if 'owns the database' in reply.get('error', '') else 'error: ' + reply.get('error', ''))
+        outcomes.append('ok' if reply.get('ok') else 'busy' if 'is using the database' in reply.get('error', '') else 'error: ' + reply.get('error', ''))
         s.close()
     except OSError as error:
         outcomes.append('connection-failed: ' + str(error))

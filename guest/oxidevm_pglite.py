@@ -12,7 +12,8 @@ ordinary socket. One request is one connection: a 4-byte big-endian length, then
 {"ok": false, "error": "..."}. A request is at most 64 KiB and a reply at most 1 MiB.
 
 For COPY, prepared statements and transactions that span calls, connect a native PostgreSQL client to
-127.0.0.1:5432 instead (user and database "postgres"); a native connection owns the database while it is open.
+127.0.0.1:5432 instead (user and database "postgres"); while a native connection runs a statement or has a
+transaction open, query() waits a moment and then raises PGliteError.
 """
 import json
 import socket
