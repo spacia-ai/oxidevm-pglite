@@ -18,7 +18,7 @@ import { wireSession } from "./src/wire.ts";
 export default defineModule({
   manifest: {
     id: "pglite",
-    version: "0.3.0",
+    version: "0.3.1",
     abi: "emscripten",
     artifacts: [
       { name: "pglite.wasm", from: "upstream/pglite.wasm" },

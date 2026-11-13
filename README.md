@@ -15,7 +15,7 @@ It starts no program of the image, and it uses no browser storage: no IndexedDB,
 ## Use it
 
 ```sh
-oxidevm wasm add github:spacia-ai/oxidevm-pglite@v0.3.0
+oxidevm wasm add github:spacia-ai/oxidevm-pglite@v0.3.1
 ```
 
 The command shows what the module declares and asks before it installs anything. It needs a cross-origin isolated page
@@ -236,6 +236,12 @@ export async function startWithLegacyData(vm: UserspaceVM, legacyName: string) {
 The IndexedDB database is only read, never changed or removed; delete it yourself once you have checked the workspace copy.
 The `migration` browser suite runs exactly this sequence against a real engine.
 
+## Changes in 0.3.1
+
+- **`NOTICES.txt` names its own release.** The file's first lines said "oxidevm-pglite 0.1.0" in 0.2.0 and 0.3.0. It now
+  says 0.3.1, and a test fails when it differs from the module's version. Nothing else changed: the adapter, the
+  WebAssembly and the license texts are those of 0.3.0.
+
 ## Changes in 0.3.0
 
 - **Several native connections at once.** In 0.2.0 a native connection leased the whole database for as long as it was
@@ -293,7 +299,7 @@ pnpm run test:conformance        # oxidevm wasm test: the runner's contract, in 
 pnpm test:browser                # real engine + Chromium (--browser=firefox|webkit), see below
 ```
 
-`@oxidevm/sdk` and `@oxidevm/cli` are exact devDependencies, installed from npm; 0.3.0 is built and tested against the
+`@oxidevm/sdk` and `@oxidevm/cli` are exact devDependencies, installed from npm; 0.3.1 is built and tested against the
 0.0.12 line. The committed `pnpm-workspace.yaml` allows
 the build script of `esbuild`, and `pnpm-lock.yaml` is committed.
 
@@ -343,18 +349,18 @@ Publishing changes what others can install, so it goes draft, verify, publish: t
 against its own `SHA256SUMS` before it becomes visible. The tag must name the version in `module.ts`.
 
 ```sh
-git tag v0.3.0 && git push origin v0.3.0
+git tag v0.3.1 && git push origin v0.3.1
 pnpm run build
-gh release create v0.3.0 dist/* --draft --verify-tag --title v0.3.0
-gh release download v0.3.0 --dir verify && (cd verify && sha256sum --check SHA256SUMS)
-gh release edit v0.3.0 --draft=false
+gh release create v0.3.1 dist/* --draft --verify-tag --title v0.3.1
+gh release download v0.3.1 --dir verify && (cd verify && sha256sum --check SHA256SUMS)
+gh release edit v0.3.1 --draft=false
 ```
 
 `pnpm run release` prints these steps and runs none of them. The `release` workflow does the same in GitHub Actions, in two
 jobs: a read-only one fetches the mirrored WebAssembly and builds, and a second one, which installs nothing, drafts, verifies
 and publishes. The `ci` workflow runs on pushes to `main` and on pull requests, and `release` runs when a `v*` tag is pushed.
 Consumers install with
-`oxidevm wasm add github:spacia-ai/oxidevm-pglite@v0.3.0`.
+`oxidevm wasm add github:spacia-ai/oxidevm-pglite@v0.3.1`.
 
 ### Build warnings
 

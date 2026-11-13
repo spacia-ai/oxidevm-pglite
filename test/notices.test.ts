@@ -19,6 +19,13 @@ function sections(): Section[] {
 }
 
 describe("NOTICES.txt", () => {
+  it("names the release it ships in: the version in its first lines is the module's version", () => {
+    // The file is one of the release's checksummed files, so a stale version here is published as is.
+    const version = /^\s*version: "([^"]+)",$/mu.exec(fs.readFileSync(path.join(root, "module.ts"), "utf8"))?.[1];
+    expect(version).toBeDefined();
+    expect(/^This release \(oxidevm-pglite ([^)]+)\) contains:$/mu.exec(notices)?.[1]).toBe(version);
+  });
+
   it("holds the license texts of every component it lists", () => {
     expect(sections().map(section => section.name)).toEqual([
       "pglite-license", "postgresql-license", "unicode-license", "emscripten-license", "musl-copyright", "llvm-license", "libxml2-license", "snowball-license",
